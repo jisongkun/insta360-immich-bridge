@@ -8,7 +8,7 @@ from bridge.immich import ImmichClient, ImmichError
 
 
 @pytest.fixture
-def server():
+def server(request):
     calls = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -28,7 +28,7 @@ def server():
             if self.path == "/api/users/me":
                 value = {"id": "owner"}
             elif self.path == "/api/server/about":
-                value = {"version": "3.2.4"}
+                value = {"version": getattr(request, "param", "3.2.4")}
             elif self.path == "/api/assets/bulk-upload-check":
                 value = {
                     "results": [
@@ -69,6 +69,22 @@ def server():
     http.shutdown()
     http.server_close()
     t.join()
+
+
+@pytest.mark.parametrize("server", ["v3.2.4", "3.2.4"], indirect=True)
+def test_identify_accepts_live_immich_release_version(server):
+    url, _ = server
+    identity = ImmichClient(url, "credential").identify()
+    assert identity["user_id"] == "owner"
+    assert identity["server"] == url + "/api"
+    assert identity["version"] in ("v3.2.4", "3.2.4")
+
+
+@pytest.mark.parametrize("server", ["v2.4.0", "v3.1.4", "unknown"], indirect=True)
+def test_identify_rejects_unsupported_server_versions(server):
+    url, _ = server
+    with pytest.raises(ValueError):
+        ImmichClient(url, "credential").identify()
 
 
 def test_stream_upload_and_readback(server, tmp_path):

@@ -68,7 +68,7 @@ class ImmichClient:
         if not user.get("id"):
             raise ImmichError(502)
         version = about.get("version", "unknown")
-        match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+        match = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", version)
         if not match or int(match[1]) != 3 or int(match[2]) < 2:
             raise ValueError(
                 "Bridge requires tested Immich 3.2 API shape; check server compatibility"

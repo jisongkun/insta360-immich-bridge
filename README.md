@@ -2,7 +2,7 @@
 
 Convert Insta360 originals into exports with 360 metadata and upload them to Immich's internal library through its API. Videos become MP4; the existing INSP photo conversion remains available as JPG output. Stitching, metadata injection, and thumbnails reuse [jagjordi/insta360-autostitcher](https://github.com/jagjordi/insta360-autostitcher). New code handles discovery, scheduling, durable state, validation, and Immich delivery. GPL-3.0, upstream attribution, and Git history are preserved; the GitHub repository remains a fork.
 
-The bridge implementation is complete, but **NAS deployment and real GPU/camera sample acceptance are outstanding**. Simulated SDK tests and container builds do not prove real INSV/INSP compatibility. See the [validation record](docs/VALIDATION.md).
+The bridge is deployed for manual testing on fnOS, but **real GPU/camera export acceptance is blocked by a MediaSDK 3.1.5 renderer crash**. Automatic processing remains off. Simulated SDK tests and container builds do not prove real INSV/INSP compatibility. See the [validation record](docs/VALIDATION.md).
 
 ## Workflow
 
@@ -39,7 +39,7 @@ Existing H.265, FlowState, direction lock, Stitch Fusion, CUDA, automatic dimens
 
 ## Startup
 
-These are deployment instructions. Development did not run `compose up` or connect to your NAS/Immich server.
+These are general deployment instructions. The fnOS test deployment and its outstanding acceptance checks are recorded in `docs/VALIDATION.md`; private operational details belong in SJOPSWiki.
 
 Place the private SDK package at `backend/vendor/MediaSDK-3.1.5-linux-amd64.deb`. It has been extracted locally from the supplied archive and is excluded from Git. The build verifies this SHA-256 by default:
 

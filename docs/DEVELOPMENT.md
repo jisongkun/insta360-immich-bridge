@@ -1,6 +1,6 @@
 # Insta360 Immich Bridge — development
 
-The checkout began at upstream `jagjordi/insta360-autostitcher` commit `d52ef69bdcdf09c16e25d3bf425b40e5447ed6dd` on 2026-10-07. The GitHub repository remains a fork, with GPL-3.0 and upstream attribution preserved. GitHub is source control only; Actions stay disabled. No NAS deployment has occurred.
+The checkout began at upstream `jagjordi/insta360-autostitcher` commit `d52ef69bdcdf09c16e25d3bf425b40e5447ed6dd` on 2026-10-07. The GitHub repository remains a fork, with GPL-3.0 and upstream attribution preserved. GitHub is source control only; Actions stay disabled. The 2026-10-07 fnOS deployment is for manual testing with automatic processing off; real export acceptance is incomplete.
 
 ## Implemented boundary
 
@@ -20,7 +20,7 @@ Upload has a persisted intent and uses Immich SHA-1 duplicate checking, then val
 
 ## API basis and SDK
 
-The reference API is Immich v3.2.4. Verified against official source: structured search sort permits fileCreatedAt, not createdAt; pattern `.like` uses case-insensitive SQL; upload checksum is SHA-1; copying associations does not replace binary content or preserve an ID; DELETE force false is soft deletion. The sync stream rejects API keys and is not used. The client checks 3.x minor >=2; actual deployed-server acceptance is still required.
+The reference API is Immich v3.2.4. Verified against official source: structured search sort permits fileCreatedAt, not createdAt; pattern `.like` uses case-insensitive SQL; upload checksum is SHA-1; copying associations does not replace binary content or preserve an ID; DELETE force false is soft deletion. The sync stream rejects API keys and is not used. The client checks 3.x minor >=2; the deployed server version and read-only metadata search have been verified; upload/replacement acceptance is still required.
 
 MediaSDK 3.1.5 was supplied privately by the user. SDK deb SHA-256 is recorded in `VALIDATION.md`. Executable `/opt/MediaSDK-3.1.5-linux/bin/MediaSDKTest`, models sibling `bin/models/`. GPU mode omits `-disable_cuda`; CLI checks its presence, so passing false would still disable it. Model root ends with `/`. The SDK sample may return 0 on error or skip missing-model features; task-specific native/stdout logs and actual media validation are both required.
 
@@ -41,7 +41,7 @@ Tests use real temporary files/SQLite, loopback HTTP, tiny FFmpeg media and a si
 - Ruling: parameter changes do not automatically overwrite completed exports; a replacement requires explicit selected-job action — matches approved design and protects original receipts — cost is a manual action when changing existing outputs.
 - Ruling: copy shared links/stack is opt-in JSON configuration; sidecar stays off — binary replacement changes asset ID and copying old sidecars can overwrite new capture metadata — cost is intentionally limited default association migration.
 - Ruling: upload-response loss preserves bytes and allows verification, but records conservative non-ownership — no reliable creation proof exists — cost is manual inspection before replacing that recovered asset.
-- Ruling: no deployment, real source media or Immich credentials are used for tests — current authorization is development and source push — Linux GPU/server acceptance remains outstanding.
+- Historical development boundary: the original unit/fixture tests used no NAS, real media or Immich credentials. The user subsequently authorized fnOS GPU deployment and end-to-end debugging; dated runtime results are tracked separately in `docs/VALIDATION.md` and SJOPSWiki.
 
 Deployment facts/policies live in `/Users/shinji/Developer/sjopswiki/projects/insta360-immich-bridge.md` and linked runbook. Read them and the target host policies before any NAS operations. SDKs/models, credentials, real media and state stay outside Git.
 

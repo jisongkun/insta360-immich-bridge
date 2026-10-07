@@ -1,6 +1,6 @@
 # Validation — 2026-10-07
 
-This records development evidence, not a claim of real camera/GPU compatibility or NAS deployment.
+This records development evidence and dated fnOS diagnostic results. Successful real-camera export and end-to-end delivery have not been demonstrated.
 
 ## Evidence collected
 
@@ -49,7 +49,7 @@ First Linux AMD64 image build failed while fetching Ubuntu packages from archive
 
 ## Remaining acceptance
 
-Real Linux NVIDIA conversion and actual INSV pair/single-file/INSP camera modes; model-dependent features and output-size/codec limits; actual Immich version/permissions, API upload/server-original verification and association migration on the target deployment; panorama playback after Immich transcode. No real media, API keys or NAS system were accessed. Actions stay disabled; push is source control only.
+Real Linux NVIDIA conversion and actual INSV pair/single-file/INSP camera modes; model-dependent features and output-size/codec limits; actual Immich version/permissions, API upload/server-original verification and association migration on the target deployment; panorama playback after Immich transcode. The earlier development suite used no real media, API keys or NAS system. Subsequent authorized runtime checks are recorded below. Actions stay disabled; push is source control only.
 
 ## English interface and documentation
 
@@ -58,3 +58,39 @@ Real Linux NVIDIA conversion and actual INSV pair/single-file/INSP camera modes;
 - Scanned all Git-tracked UTF-8 text files for Chinese ideographs: no matches. The HTML document already declares `lang="en"`.
 - Rendered production build in the in-app browser against a temporary localhost fixture. Verified English dashboard, expanded integration settings, job receipt/event labels and date/time display. Saved an English settings screenshot outside the repository. Fixture state did not invoke Immich, SDK conversion or production actions; temporary preview was stopped after inspection.
 - Backend tests were not repeated for this text/locale-only change. The prior backend acceptance limits above still apply.
+
+## Authorized fnOS manual deployment and real SDK diagnostics
+
+On 2026-10-07 the user authorized NAS deployment, its NVIDIA GPU, highest-quality H.265 and end-to-end debugging. Deployed backend/frontend images from source `77ae26a` as Linux AMD64 on fnOS. Frontend HTTP 200, unauthenticated status 401 and authenticated status 200; automatic processing off, zero jobs. Verified source/key mounts read-only and separate SSD config/state volumes and HDD workspace. Private deployment paths and credential references are recorded in SJOPSWiki.
+
+Read-only Immich API checks verified version 3.2.4, the requested account, and 90 indexed INSV assets. The live server uses `/data`, requiring `/data` -> `/sources`. Three short X6 sources contain two HEVC Main10 3840x3840 tracks at 50 fps, AAC stereo, BT.2020/HLG. No source files were modified or downloaded to the development machine. Existing inbox credentials were used in process memory for initial identity/search diagnostics only. The user subsequently approved the dedicated bridge key's exact scope in local Chrome; it was created, backed up to Bitwarden and installed read-only on fnOS. No credentials enter Git.
+
+Requested profile is fixed 7680x3840, 200 Mbps, H.265, AI stitching, FlowState, direction lock, Stitch Fusion and CUDA enabled. This is **not a validated highest-quality export**. The current bridge has no 10-bit/software-codec profile flags; standalone diagnostic SDK commands tested them without modifying the conversion algorithm or production configuration.
+
+Actual SDK 3.1.5 tests on the Tesla P4 (driver 580.142) failed:
+
+| Controlled diagnostic | Result |
+| --- | --- |
+| Requested 8K AI/H.265, explicit 10-bit, hardware codecs | Exit 139; CUDA decoder OOM and renderer errors; invalid MP4 |
+| Same with software decoding, GPU stitching/encoding retained | Exit 139; OpenGL invalid-value/operation/framebuffer errors |
+| Software decode with Immich ML temporarily stopped; 0 MiB GPU used before run | Same renderer failure; ML restarted and health verified |
+| Omit explicit 10-bit export flag | Same failure; SDK still selects its SDR10 path for these sources |
+| Simplified 4K optflow/software decode; omit stabilization/fusion | Same failure |
+| Same simplified profile with a second source | Same failure |
+| Same SDK/source/profile under vendor-supported Ubuntu 22.04 dependencies | Same failure; production Ubuntu 24.04 alone does not explain it |
+
+NVIDIA GL context logs identify Tesla P4 and OpenGL 4.3; real driver EGL/GLX libraries are mounted. `GLEW initialization failed` precedes invalid GL operations and segmentation fault. Outputs are 44-byte MP4 headers with no `moov` atom; ffprobe rejects them. Reducing resolution and freeing VRAM did not resolve the renderer failure, so it is not established as a simple VRAM-capacity problem. The corresponding [vendor issue #50](https://github.com/Insta360Develop/Desktop-MediaSDK-Cpp/issues/50) contains a 3.1.5 headless regression report with matching errors. That report is a lead; exact binary root cause and a working fix remain unverified.
+
+The Ubuntu 22.04 diagnostic image and copied private SDK live outside Git. No NAS driver/daemon change, Immich database write, original mutation or failed-output upload occurred. Native success, 10-bit/color fidelity, panorama playback, actual upload/hash verification/cleanup and real dedup/replacement remain outstanding. Automatic processing must stay off until those checks pass.
+
+## Dedicated-key integration and original-worker failure test
+
+- The actual server returns `v3.2.4` from `/server/about`. Identity succeeded directly but the bridge rejected that release prefix. A real loopback HTTP regression failed before the minimal optional-`v` parsing fix; both bare/prefixed versions now pass, while unsupported 2.x, 3.1 and unknown versions still reject. Conversion code is unchanged.
+- Fresh backend validation after this fix: `PYTHONPATH=backend .venv/bin/python -m pytest backend/tests -q` → **46 passed in 21.05s**; ruff F, legacy AST and diff checks passed. The deployed module's SHA-256 matches the checkout. No frontend source changed in this fix.
+- Dedicated-key `/users/me`, `/server/about` and authenticated bridge status returned 200 for the expected account. The bridge reports connected to `v3.2.4`.
+- A controlled folder scan selected one 15.4 MB, approximately 0.6-second X6 source. The bridge dispatched it through the original worker with the requested fixed 7680x3840, 200 Mbps, AI/H.265 profile. The native process aborted (worker return **-6**) after CUDA/OpenGL errors. The job persisted `failed` / `converting`, with no asset ID, ownership or verification proof. Controller/native logs are visible in local Chrome. This pipeline test did not produce an accepted export or upload.
+- Source SHA-256 before and after the job was identical. Restored API discovery settings afterward; automatic processing remains off, with no active tasks.
+- A subsequent real bridge API discovery persisted **123 source records** and an upper-bound watermark. The already stable test source reused the existing job; job count remained one. This verifies index/watermark persistence and rediscovery reuse for that failed source, **not completed-export deduplication**. No broad library conversion was triggered.
+- All four Immich core containers remained healthy. Runtime state/config were snapshotted separately from Git; recovery references and image identities belong in SJOPSWiki.
+
+End-to-end acceptance is still blocked at native SDK conversion. Upload/server-original hash verification, local cleanup, completed/restart deduplication, replacement and panorama playback cannot be claimed from this failed run or the simulated tests.

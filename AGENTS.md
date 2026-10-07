@@ -1,6 +1,6 @@
 # Insta360 Immich Bridge
 
-Fork of https://github.com/jagjordi/insta360-autostitcher. This checkout is development source only; no NAS deployment has occurred.
+Fork of https://github.com/jagjordi/insta360-autostitcher. This checkout is development source. A manual-test deployment runs on fnOS; automatic processing is off and real SDK export acceptance is incomplete. Deployment evidence and credential references belong in SJOPSWiki.
 
 ## Authority and scope
 
