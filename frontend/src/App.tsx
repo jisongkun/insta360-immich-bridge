@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import clsx from 'clsx';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from "react";
+import clsx from "clsx";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  regenerateJobs,
   fetchStatus,
   generateThumbnailsForJobs,
   getAuthToken,
@@ -13,11 +14,13 @@ import {
   updateExpectedRatio,
   updateParallelism,
   computeExpectedRatio,
-  updateStitchSettings
-} from './api';
-import type { Job, TaskAction } from './types';
-import { JobTable } from './components/JobTable';
-import './App.css';
+  updateStitchSettings,
+} from "./api";
+import type { Job, TaskAction } from "./types";
+import { JobTable } from "./components/JobTable";
+import { BridgePanel } from "./components/BridgePanel";
+import { BridgeJobDetails } from "./components/BridgeJobDetails";
+import "./App.css";
 
 const ACTIONS: Array<{
   action: TaskAction;
@@ -25,51 +28,59 @@ const ACTIONS: Array<{
   description: string;
 }> = [
   {
-    action: 'scan',
-    label: 'Scan',
-    description: 'Quick scan for new RAW pairs'
+    action: "scan",
+    label: "Scan",
+    description: "Discover stable sources; does not start conversion",
   },
   {
-    action: 'deep_scan',
-    label: 'Deep Scan',
-    description: 'Re-evaluate every job and recalculate progress'
+    action: "deep_scan",
+    label: "Deep Scan",
+    description: "Full source reconciliation and remote receipt check",
   },
   {
-    action: 'stitch',
-    label: 'Stitch Pending',
-    description: 'Run stitcher for queued items only'
+    action: "stitch",
+    label: "Stitch Pending",
+    description: "Run stitcher for queued items only",
   },
   {
-    action: 'full_stitch',
-    label: 'Retry Failed',
-    description: 'Attempt stitching for failed jobs as well'
+    action: "full_stitch",
+    label: "Retry Failed",
+    description: "Attempt stitching for failed jobs as well",
   },
   {
-    action: 'generate_thumbnails',
-    label: 'Generate Thumbnails',
-    description: 'Extract preview thumbnails for jobs missing them'
-  }
+    action: "generate_thumbnails",
+    label: "Generate Thumbnails",
+    description: "Extract preview thumbnails for jobs missing them",
+  },
 ];
 
-const SELECTABLE_STATUSES = new Set<Job['status']>(['unprocessed', 'failed']);
+const SELECTABLE_STATUSES = new Set<Job["status"]>([
+  "unprocessed",
+  "failed",
+  "processed",
+]);
 
-const statusOrder: Record<TaskAction | 'status', number> = {
+const statusOrder: Record<TaskAction | "status", number> = {
   scan: 0,
   deep_scan: 1,
   stitch: 2,
   full_stitch: 3,
   generate_thumbnails: 4,
   stitch_selected: 5,
-  status: 4
+  full_run: 6,
+  regenerate_selected: 7,
+  test_connection: 8,
+  status: 4,
 };
 
 export default function App() {
+  const [detailsJob, setDetailsJob] = useState<Job | null>(null);
   const queryClient = useQueryClient();
   const [pollingFast, setPollingFast] = useState(false);
   const statusQuery = useQuery({
-    queryKey: ['status'],
+    queryKey: ["status"],
     queryFn: fetchStatus,
-    refetchInterval: pollingFast ? 1000 : 15000
+    refetchInterval: pollingFast ? 1000 : 15000,
   });
 
   const mutation = useMutation({
@@ -78,16 +89,19 @@ export default function App() {
       setActiveTask({ id: data.task_id, action });
       setLastTaskTriggeredAt(Date.now());
       setConfirmStop(false);
-      queryClient.invalidateQueries({ queryKey: ['status'] });
-    }
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+    },
   });
 
   const jobs = statusQuery.data?.jobs ?? [];
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
-  const [loginTokenValue, setLoginTokenValue] = useState('');
-  const [activeTask, setActiveTask] = useState<{ id: string; action: TaskAction } | null>(null);
+  const [loginTokenValue, setLoginTokenValue] = useState("");
+  const [activeTask, setActiveTask] = useState<{
+    id: string;
+    action: TaskAction;
+  } | null>(null);
   const [lastTaskTriggeredAt, setLastTaskTriggeredAt] = useState(0);
   const [confirmStop, setConfirmStop] = useState(false);
   const [stitchConcurrencyValue, setStitchConcurrencyValue] = useState(1);
@@ -95,16 +109,18 @@ export default function App() {
   const [deepScanConcurrencyValue, setDeepScanConcurrencyValue] = useState(1);
   const [thumbnailConcurrencyValue, setThumbnailConcurrencyValue] = useState(4);
   const [ratioValue, setRatioValue] = useState(1);
-  const [outputSizeValue, setOutputSizeValue] = useState('');
-  const [bitrateValue, setBitrateValue] = useState('');
-  const [stitchTypeValue, setStitchTypeValue] = useState('');
+  const [outputSizeValue, setOutputSizeValue] = useState("");
+  const [bitrateValue, setBitrateValue] = useState("");
+  const [stitchTypeValue, setStitchTypeValue] = useState("");
   const [autoResolution, setAutoResolution] = useState(false);
   const [originalBitrate, setOriginalBitrate] = useState(false);
 
   useEffect(() => {
     setSelectedJobs((prev) => {
       const validIds = new Set(
-        jobs.filter((job) => SELECTABLE_STATUSES.has(job.status)).map((job) => job.id)
+        jobs
+          .filter((job) => SELECTABLE_STATUSES.has(job.status))
+          .map((job) => job.id),
       );
       const next = new Set<string>();
       prev.forEach((id) => {
@@ -118,10 +134,22 @@ export default function App() {
 
   const settingsMutation = useMutation({
     mutationFn: async () => {
-      const sanitizedStitchConcurrency = Math.max(1, Math.round(stitchConcurrencyValue));
-      const sanitizedScanConcurrency = Math.max(1, Math.round(scanConcurrencyValue));
-      const sanitizedDeepConcurrency = Math.max(1, Math.round(deepScanConcurrencyValue));
-      const sanitizedThumbnailConcurrency = Math.max(1, Math.round(thumbnailConcurrencyValue));
+      const sanitizedStitchConcurrency = Math.max(
+        1,
+        Math.round(stitchConcurrencyValue),
+      );
+      const sanitizedScanConcurrency = Math.max(
+        1,
+        Math.round(scanConcurrencyValue),
+      );
+      const sanitizedDeepConcurrency = Math.max(
+        1,
+        Math.round(deepScanConcurrencyValue),
+      );
+      const sanitizedThumbnailConcurrency = Math.max(
+        1,
+        Math.round(thumbnailConcurrencyValue),
+      );
       const sanitizedOutput = outputSizeValue.trim();
       const sanitizedBitrate = bitrateValue.trim();
       const sanitizedStitchType = stitchTypeValue.trim();
@@ -130,7 +158,7 @@ export default function App() {
           stitch_parallelism: sanitizedStitchConcurrency,
           scan_parallelism: sanitizedScanConcurrency,
           deep_scan_parallelism: sanitizedDeepConcurrency,
-          thumbnail_parallelism: sanitizedThumbnailConcurrency
+          thumbnail_parallelism: sanitizedThumbnailConcurrency,
         }),
         updateExpectedRatio(ratioValue),
         updateStitchSettings({
@@ -138,40 +166,48 @@ export default function App() {
           bitrate: sanitizedBitrate,
           stitch_type: sanitizedStitchType,
           auto_resolution: autoResolution,
-          original_bitrate: originalBitrate
-        })
+          original_bitrate: originalBitrate,
+        }),
       ]);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['status'] });
+      queryClient.invalidateQueries({ queryKey: ["status"] });
       setSettingsOpen(false);
-    }
+    },
   });
 
   const computeRatioMutation = useMutation({
     mutationFn: () => computeExpectedRatio(),
     onSuccess: (data) => {
       setRatioValue(data.expected_size_ratio);
-      queryClient.invalidateQueries({ queryKey: ['status'] });
-    }
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+    },
   });
 
   const stitchSelectedMutation = useMutation({
     mutationFn: (jobIds: string[]) => stitchSelectedJobs(jobIds),
     onSuccess: () => {
       setSelectedJobs(new Set());
-      queryClient.invalidateQueries({ queryKey: ['status'] });
-    }
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+    },
+  });
+  const regenerateMutation = useMutation({
+    mutationFn: regenerateJobs,
+    onSuccess: () => {
+      setSelectedJobs(new Set());
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+    },
   });
   const thumbnailsSelectedMutation = useMutation({
     mutationFn: (jobIds: string[]) => generateThumbnailsForJobs(jobIds),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['status'] });
-    }
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+    },
   });
   const summary = useMemo(() => summarizeJobs(jobs), [jobs]);
   const activeJobs = statusQuery.data?.active_jobs ?? [];
-  const queuedJobs = statusQuery.data?.queued_jobs ?? statusQuery.data?.pending_jobs ?? 0;
+  const queuedJobs =
+    statusQuery.data?.queued_jobs ?? statusQuery.data?.pending_jobs ?? 0;
   const pendingJobs = statusQuery.data?.pending_jobs ?? 0;
   const maxParallelJobs = statusQuery.data?.max_parallel_jobs ?? 1;
   const expectedRatio = statusQuery.data?.expected_size_ratio ?? 1;
@@ -188,9 +224,9 @@ export default function App() {
       setScanConcurrencyValue(scanConcurrency);
       setDeepScanConcurrencyValue(deepConcurrency);
       setRatioValue(expectedRatio);
-      setOutputSizeValue(stitchSettings?.output_size ?? '');
-      setBitrateValue(stitchSettings?.bitrate ?? '');
-      setStitchTypeValue(stitchSettings?.stitch_type ?? '');
+      setOutputSizeValue(stitchSettings?.output_size ?? "");
+      setBitrateValue(stitchSettings?.bitrate ?? "");
+      setStitchTypeValue(stitchSettings?.stitch_type ?? "");
       setAutoResolution(stitchSettings?.auto_resolution ?? false);
       setThumbnailConcurrencyValue(thumbnailConcurrency);
       setOriginalBitrate(stitchSettings?.original_bitrate ?? false);
@@ -202,9 +238,11 @@ export default function App() {
     deepConcurrency,
     thumbnailConcurrency,
     expectedRatio,
-    stitchSettings
+    stitchSettings,
   ]);
-  const lastUpdated = statusQuery.dataUpdatedAt ? new Date(statusQuery.dataUpdatedAt).toLocaleTimeString() : '—';
+  const lastUpdated = statusQuery.dataUpdatedAt
+    ? new Date(statusQuery.dataUpdatedAt).toLocaleTimeString()
+    : "—";
   const controlsLocked = mutation.isPending || !!activeTask || loginOpen;
   const activeTasks = statusQuery.data?.active_tasks ?? [];
   const showTaskControl = mutation.isPending || !!activeTask;
@@ -241,15 +279,15 @@ export default function App() {
     activeTask,
     statusQuery.data?.active_tasks,
     statusQuery.dataUpdatedAt,
-    lastTaskTriggeredAt
+    lastTaskTriggeredAt,
   ]);
 
   const terminateMutation = useMutation({
     mutationFn: (taskId: string) => terminateTask(taskId),
     onSuccess: () => {
       setConfirmStop(false);
-      queryClient.invalidateQueries({ queryKey: ['status'] });
-    }
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+    },
   });
 
   const loginMutation = useMutation({
@@ -257,8 +295,8 @@ export default function App() {
     onSuccess: (_data, token) => {
       setAuthToken(token);
       setLoginOpen(false);
-      queryClient.invalidateQueries({ queryKey: ['status'] });
-    }
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+    },
   });
 
   const trigger = (action: TaskAction) => {
@@ -273,8 +311,11 @@ export default function App() {
     <div className="app-container">
       <header className="panel hero">
         <div>
-          <h1>Insta360 Autostitcher</h1>
-          <p className="muted">Monitor queued jobs and trigger scans or stitching from the browser.</p>
+          <h1>Insta360 Immich Bridge</h1>
+          <p className="muted">
+            Discover originals, stitch 360 media, and deliver verified exports
+            to Immich.
+          </p>
         </div>
         <div className="hero-stats">
           <div>
@@ -296,6 +337,13 @@ export default function App() {
         </div>
       </header>
 
+      <BridgePanel status={statusQuery.data} enabled={!loginOpen} />
+      {detailsJob && (
+        <BridgeJobDetails
+          job={detailsJob}
+          onClose={() => setDetailsJob(null)}
+        />
+      )}
       <section className="panel actions">
         <div className="actions-header">
           <h2>Controls</h2>
@@ -306,10 +354,12 @@ export default function App() {
                   <button
                     type="button"
                     className="confirm-stop"
-                    onClick={() => activeTask && terminateMutation.mutate(activeTask.id)}
+                    onClick={() =>
+                      activeTask && terminateMutation.mutate(activeTask.id)
+                    }
                     disabled={terminateMutation.isPending}
                   >
-                    {terminateMutation.isPending ? 'Stopping…' : 'Confirm?'}
+                    {terminateMutation.isPending ? "Stopping…" : "Confirm?"}
                   </button>
                 ) : (
                   <button
@@ -333,7 +383,12 @@ export default function App() {
             >
               Refresh
             </button>
-            <button className="ghost" type="button" onClick={() => setSettingsOpen(true)} disabled={controlsLocked}>
+            <button
+              className="ghost"
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              disabled={controlsLocked}
+            >
               Settings
             </button>
           </div>
@@ -355,35 +410,92 @@ export default function App() {
           ))}
         </div>
         {controlsLocked && <p className="muted">Command running…</p>}
-        {mutation.isError && <p className="error">{(mutation.error as Error)?.message}</p>}
+        {mutation.isError && (
+          <p className="error">{(mutation.error as Error)?.message}</p>
+        )}
       </section>
 
       <section className="panel summary">
         <h2>Job Summary</h2>
+        <p className="muted">
+          转换百分比和预计大小沿用原转换器估算；完成以 Immich 原文件核验为准。
+        </p>
         <div className="summary-grid">
           <SummaryCard label="Queued" value={queuedJobs} tone="queued" />
           <SummaryCard label="Pending" value={pendingJobs} tone="pending" />
-          <SummaryCard label="Processing" value={summary.processing} tone="running" />
-          <SummaryCard label="Finished" value={summary.processed} tone="success" />
+          <SummaryCard
+            label="Processing"
+            value={summary.processing}
+            tone="running"
+          />
+          <SummaryCard
+            label="Finished"
+            value={summary.processed}
+            tone="success"
+          />
           <SummaryCard label="Failed" value={summary.failed} tone="failed" />
         </div>
       </section>
 
       {statusQuery.isError && (
-        <div className="panel error">Failed to load status: {(statusQuery.error as Error)?.message}</div>
+        <div className="panel error">
+          Failed to load status: {(statusQuery.error as Error)?.message}
+        </div>
       )}
 
       <SelectionActions
         selectedCount={selectedJobs.size}
         pendingJobs={pendingJobs}
         queuedJobs={queuedJobs}
-        onGenerate={() => thumbnailsSelectedMutation.mutate(Array.from(selectedJobs))}
+        onGenerate={() =>
+          thumbnailsSelectedMutation.mutate(Array.from(selectedJobs))
+        }
         onStitch={() => stitchSelectedMutation.mutate(Array.from(selectedJobs))}
         isGenerating={thumbnailsSelectedMutation.isPending}
         isStitching={stitchSelectedMutation.isPending}
         disabled={selectedJobs.size === 0 || controlsLocked}
       />
+      <div className="selection-actions">
+        <span>
+          新设置只用于新任务。选择已完成的成片可重新生成并替换；旧成片进入
+          Immich 回收站。
+        </span>
+        <button
+          type="button"
+          className="primary"
+          disabled={
+            controlsLocked ||
+            regenerateMutation.isPending ||
+            !jobs.some(
+              (j) =>
+                selectedJobs.has(j.id) &&
+                j.status === "processed" &&
+                j.owned &&
+                !j.replaced_by,
+            )
+          }
+          onClick={() =>
+            regenerateMutation.mutate(
+              jobs
+                .filter(
+                  (j) =>
+                    selectedJobs.has(j.id) &&
+                    j.status === "processed" &&
+                    j.owned &&
+                    !j.replaced_by,
+                )
+                .map((j) => j.id),
+            )
+          }
+        >
+          重新生成并替换所选导出
+        </button>
+        {regenerateMutation.isError && (
+          <p className="error">{regenerateMutation.error.message}</p>
+        )}
+      </div>
       <JobTable
+        onDetails={setDetailsJob}
         jobs={jobs}
         isLoading={statusQuery.isLoading}
         selectedJobs={selectedJobs}
@@ -417,7 +529,9 @@ export default function App() {
         selectedCount={selectedJobs.size}
         pendingJobs={pendingJobs}
         queuedJobs={queuedJobs}
-        onGenerate={() => thumbnailsSelectedMutation.mutate(Array.from(selectedJobs))}
+        onGenerate={() =>
+          thumbnailsSelectedMutation.mutate(Array.from(selectedJobs))
+        }
         onStitch={() => stitchSelectedMutation.mutate(Array.from(selectedJobs))}
         isGenerating={thumbnailsSelectedMutation.isPending}
         isStitching={stitchSelectedMutation.isPending}
@@ -425,11 +539,15 @@ export default function App() {
       />
       {thumbnailsSelectedMutation.isError && (
         <div className="panel error">
-          Failed to generate thumbnails: {(thumbnailsSelectedMutation.error as Error)?.message}
+          Failed to generate thumbnails:{" "}
+          {(thumbnailsSelectedMutation.error as Error)?.message}
         </div>
       )}
       {stitchSelectedMutation.isError && (
-        <div className="panel error">Failed to stitch selected: {(stitchSelectedMutation.error as Error)?.message}</div>
+        <div className="panel error">
+          Failed to stitch selected:{" "}
+          {(stitchSelectedMutation.error as Error)?.message}
+        </div>
       )}
       {settingsOpen && (
         <div className="modal-backdrop">
@@ -442,11 +560,13 @@ export default function App() {
               min={1}
               value={stitchConcurrencyValue}
               onChange={(event) => {
-                  const next = Number(event.target.value);
-                  setStitchConcurrencyValue(Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)));
-                }}
-                disabled={settingsMutation.isPending}
-              />
+                const next = Number(event.target.value);
+                setStitchConcurrencyValue(
+                  Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)),
+                );
+              }}
+              disabled={settingsMutation.isPending}
+            />
             <label htmlFor="scan-concurrency-input">Scan jobs</label>
             <input
               id="scan-concurrency-input"
@@ -455,7 +575,9 @@ export default function App() {
               value={scanConcurrencyValue}
               onChange={(event) => {
                 const next = Number(event.target.value);
-                setScanConcurrencyValue(Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)));
+                setScanConcurrencyValue(
+                  Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)),
+                );
               }}
               disabled={settingsMutation.isPending}
             />
@@ -467,7 +589,9 @@ export default function App() {
               value={deepScanConcurrencyValue}
               onChange={(event) => {
                 const next = Number(event.target.value);
-                setDeepScanConcurrencyValue(Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)));
+                setDeepScanConcurrencyValue(
+                  Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)),
+                );
               }}
               disabled={settingsMutation.isPending}
             />
@@ -479,7 +603,9 @@ export default function App() {
               value={thumbnailConcurrencyValue}
               onChange={(event) => {
                 const next = Number(event.target.value);
-                setThumbnailConcurrencyValue(Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)));
+                setThumbnailConcurrencyValue(
+                  Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)),
+                );
               }}
               disabled={settingsMutation.isPending}
             />
@@ -495,15 +621,21 @@ export default function App() {
                   const next = Number(event.target.value);
                   setRatioValue(Number.isNaN(next) ? 1 : Math.max(0.01, next));
                 }}
-                disabled={settingsMutation.isPending || computeRatioMutation.isPending}
+                disabled={
+                  settingsMutation.isPending || computeRatioMutation.isPending
+                }
               />
               <button
                 type="button"
                 className="ghost"
                 onClick={() => computeRatioMutation.mutate()}
-                disabled={computeRatioMutation.isPending || settingsMutation.isPending}
+                disabled={
+                  computeRatioMutation.isPending || settingsMutation.isPending
+                }
               >
-                {computeRatioMutation.isPending ? 'Computing…' : 'Compute Ratio'}
+                {computeRatioMutation.isPending
+                  ? "Computing…"
+                  : "Compute Ratio"}
               </button>
             </div>
             <div className="checkbox-row">
@@ -516,7 +648,7 @@ export default function App() {
                     const checked = event.target.checked;
                     setAutoResolution(checked);
                     if (checked) {
-                      setOutputSizeValue('');
+                      setOutputSizeValue("");
                     }
                   }}
                   disabled={settingsMutation.isPending}
@@ -528,12 +660,18 @@ export default function App() {
             <input
               id="resolution-input"
               type="text"
-              value={autoResolution ? '' : outputSizeValue}
+              value={autoResolution ? "" : outputSizeValue}
               onChange={(event) => setOutputSizeValue(event.target.value)}
               disabled={settingsMutation.isPending || autoResolution}
-              placeholder={autoResolution ? 'Auto: 2×input width × input height' : 'e.g. 5760x2880'}
+              placeholder={
+                autoResolution
+                  ? "Auto: 2×input width × input height"
+                  : "e.g. 5760x2880"
+              }
             />
-            <label htmlFor="bitrate-input">Bitrate (leave blank to match input)</label>
+            <label htmlFor="bitrate-input">
+              Bitrate (leave blank to match input)
+            </label>
             <input
               id="bitrate-input"
               type="text"
@@ -551,7 +689,7 @@ export default function App() {
                     const checked = event.target.checked;
                     setOriginalBitrate(checked);
                     if (checked) {
-                      setBitrateValue('');
+                      setBitrateValue("");
                     }
                   }}
                   disabled={settingsMutation.isPending}
@@ -582,16 +720,20 @@ export default function App() {
                 onClick={() => settingsMutation.mutate()}
                 disabled={settingsMutation.isPending}
               >
-                {settingsMutation.isPending ? 'Saving…' : 'Save'}
+                {settingsMutation.isPending ? "Saving…" : "Save"}
               </button>
             </div>
             {computeRatioMutation.isError && (
               <p className="error">
-                Failed to compute ratio: {(computeRatioMutation.error as Error)?.message}
+                Failed to compute ratio:{" "}
+                {(computeRatioMutation.error as Error)?.message}
               </p>
             )}
             {settingsMutation.isError && (
-              <p className="error">Failed to update settings: {(settingsMutation.error as Error)?.message}</p>
+              <p className="error">
+                Failed to update settings:{" "}
+                {(settingsMutation.error as Error)?.message}
+              </p>
             )}
           </div>
         </div>
@@ -615,11 +757,13 @@ export default function App() {
                 onClick={() => loginMutation.mutate(loginTokenValue.trim())}
                 disabled={!loginTokenValue.trim() || loginMutation.isPending}
               >
-                {loginMutation.isPending ? 'Logging in…' : 'Login'}
+                {loginMutation.isPending ? "Logging in…" : "Login"}
               </button>
             </div>
             {loginMutation.isError && (
-              <p className="error">Login failed: {(loginMutation.error as Error)?.message}</p>
+              <p className="error">
+                Login failed: {(loginMutation.error as Error)?.message}
+              </p>
             )}
           </div>
         </div>
@@ -635,19 +779,19 @@ function summarizeJobs(jobs: Job[]) {
       acc[job.status] += 1;
       return acc;
     },
-    { total: 0, unprocessed: 0, processing: 0, processed: 0, failed: 0 }
+    { total: 0, unprocessed: 0, processing: 0, processed: 0, failed: 0 },
   );
 }
 
 interface SummaryCardProps {
   label: string;
   value: number;
-  tone: 'queued' | 'pending' | 'running' | 'success' | 'failed';
+  tone: "queued" | "pending" | "running" | "success" | "failed";
 }
 
 function SummaryCard({ label, value, tone }: SummaryCardProps) {
   return (
-    <div className={clsx('summary-card', tone)}>
+    <div className={clsx("summary-card", tone)}>
       <span className="muted">{label}</span>
       <span className="stat-value">{value}</span>
     </div>
@@ -673,7 +817,7 @@ function SelectionActions({
   onStitch,
   isGenerating,
   isStitching,
-  disabled
+  disabled,
 }: SelectionActionsProps) {
   return (
     <div className="selection-actions">
@@ -681,11 +825,21 @@ function SelectionActions({
         {selectedCount} selected · {queuedJobs} queued · {pendingJobs} pending
       </span>
       <div className="selection-buttons">
-        <button type="button" className="ghost" onClick={onGenerate} disabled={disabled || isGenerating}>
-          {isGenerating ? 'Generating…' : 'Thumbnails Selected'}
+        <button
+          type="button"
+          className="ghost"
+          onClick={onGenerate}
+          disabled={disabled || isGenerating}
+        >
+          {isGenerating ? "Generating…" : "Thumbnails Selected"}
         </button>
-        <button type="button" className="primary" onClick={onStitch} disabled={disabled || isStitching}>
-          {isStitching ? 'Stitching…' : 'Stitch Selected'}
+        <button
+          type="button"
+          className="primary"
+          onClick={onStitch}
+          disabled={disabled || isStitching}
+        >
+          {isStitching ? "Stitching…" : "Stitch Selected"}
         </button>
       </div>
     </div>

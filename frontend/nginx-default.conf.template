@@ -6,48 +6,11 @@ server {
     root   /usr/share/nginx/html;
     index  index.html index.htm;
 
-    location /status {
+    location ~ ^/(status|tasks|login|settings|jobs|events|thumbnails)(/|$) {
         proxy_pass ${API_PROXY_TARGET};
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300s;
-        proxy_connect_timeout 120s;
-        proxy_send_timeout 120s;
-    }
-
-    location /tasks {
-        proxy_pass ${API_PROXY_TARGET};
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-        proxy_connect_timeout 120s;
-        proxy_send_timeout 120s;
-    }
-
-    location /thumbnails/ {
-        proxy_pass ${API_PROXY_TARGET};
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-        proxy_connect_timeout 120s;
-        proxy_send_timeout 120s;
-    }
-
-    location /settings/ {
-        proxy_pass ${API_PROXY_TARGET};
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-        proxy_connect_timeout 120s;
-        proxy_send_timeout 120s;
     }
 
     location / {

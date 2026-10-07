@@ -1,12 +1,12 @@
-import type { StatusResponse, TaskAction } from './types';
+import type { StatusResponse, TaskAction } from "./types";
 
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
 
 const headers = {
-  'Content-Type': 'application/json'
+  "Content-Type": "application/json",
 };
 
-const TOKEN_KEY = 'autostitcher_login_token';
+const TOKEN_KEY = "autostitcher_login_token";
 
 export function setAuthToken(token: string | null): void {
   if (!token) {
@@ -20,18 +20,29 @@ export function getAuthToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export async function request<T>(
+  path: string,
+  options?: RequestInit,
+): Promise<T> {
   const token = getAuthToken();
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       ...(options?.headers ?? {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    }
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
   });
   if (!response.ok) {
-    const message = await response.text();
-    const error = new Error(message || 'Request failed') as Error & { status?: number };
+    const raw = await response.text();
+    let message = raw;
+    try {
+      message = (JSON.parse(raw) as { error?: string }).error ?? raw;
+    } catch {
+      /* Plain-text upstream response */
+    }
+    const error = new Error(message || "Request failed") as Error & {
+      status?: number;
+    };
     error.status = response.status;
     throw error;
   }
@@ -39,48 +50,54 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export function fetchStatus(): Promise<StatusResponse> {
-  return request<StatusResponse>('/status', {
-    headers
+  return request<StatusResponse>("/status", {
+    headers,
   });
 }
 
-export function triggerTask(action: TaskAction): Promise<{ scheduled: string; task_id: string }> {
-  return request<{ scheduled: string; task_id: string }>('/tasks', {
-    method: 'POST',
+export function triggerTask(
+  action: TaskAction,
+): Promise<{ scheduled: string; task_id: string }> {
+  return request<{ scheduled: string; task_id: string }>("/tasks", {
+    method: "POST",
     headers,
-    body: JSON.stringify({ action })
+    body: JSON.stringify({ action }),
   });
 }
 
 export function login(token: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>('/login', {
-    method: 'POST',
+  return request<{ ok: boolean }>("/login", {
+    method: "POST",
     headers,
-    body: JSON.stringify({ token })
+    body: JSON.stringify({ token }),
   });
 }
 
 export function terminateTask(taskId: string): Promise<{ terminated: string }> {
-  return request<{ terminated: string }>('/tasks/terminate', {
-    method: 'POST',
+  return request<{ terminated: string }>("/tasks/terminate", {
+    method: "POST",
     headers,
-    body: JSON.stringify({ task_id: taskId })
+    body: JSON.stringify({ task_id: taskId }),
   });
 }
 
-export function stitchSelectedJobs(jobIds: string[]): Promise<{ scheduled: string }> {
-  return request<{ scheduled: string }>('/tasks', {
-    method: 'POST',
+export function stitchSelectedJobs(
+  jobIds: string[],
+): Promise<{ scheduled: string }> {
+  return request<{ scheduled: string }>("/tasks", {
+    method: "POST",
     headers,
-    body: JSON.stringify({ action: 'stitch_selected', job_ids: jobIds })
+    body: JSON.stringify({ action: "stitch_selected", job_ids: jobIds }),
   });
 }
 
-export function generateThumbnailsForJobs(jobIds: string[]): Promise<{ scheduled: string }> {
-  return request<{ scheduled: string }>('/tasks', {
-    method: 'POST',
+export function generateThumbnailsForJobs(
+  jobIds: string[],
+): Promise<{ scheduled: string }> {
+  return request<{ scheduled: string }>("/tasks", {
+    method: "POST",
     headers,
-    body: JSON.stringify({ action: 'generate_thumbnails', job_ids: jobIds })
+    body: JSON.stringify({ action: "generate_thumbnails", job_ids: jobIds }),
   });
 }
 
@@ -91,26 +108,32 @@ export interface ParallelismPayload {
   thumbnail_parallelism: number;
 }
 
-export function updateParallelism(payload: ParallelismPayload): Promise<ParallelismPayload> {
-  return request<ParallelismPayload>('/settings/parallelism', {
-    method: 'POST',
+export function updateParallelism(
+  payload: ParallelismPayload,
+): Promise<ParallelismPayload> {
+  return request<ParallelismPayload>("/settings/parallelism", {
+    method: "POST",
     headers,
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
 }
 
-export function updateExpectedRatio(expectedRatio: number): Promise<{ expected_size_ratio: number }> {
-  return request<{ expected_size_ratio: number }>('/settings/ratio', {
-    method: 'POST',
+export function updateExpectedRatio(
+  expectedRatio: number,
+): Promise<{ expected_size_ratio: number }> {
+  return request<{ expected_size_ratio: number }>("/settings/ratio", {
+    method: "POST",
     headers,
-    body: JSON.stringify({ expected_size_ratio: expectedRatio })
+    body: JSON.stringify({ expected_size_ratio: expectedRatio }),
   });
 }
 
-export function computeExpectedRatio(): Promise<{ expected_size_ratio: number }> {
-  return request<{ expected_size_ratio: number }>('/settings/ratio/compute', {
-    method: 'POST',
-    headers
+export function computeExpectedRatio(): Promise<{
+  expected_size_ratio: number;
+}> {
+  return request<{ expected_size_ratio: number }>("/settings/ratio/compute", {
+    method: "POST",
+    headers,
   });
 }
 
@@ -133,12 +156,25 @@ export function updateStitchSettings(settings: {
     stitch_type: string;
     auto_resolution: boolean;
     original_bitrate: boolean;
-  }>(
-    '/settings/stitch',
-    {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(settings)
-    }
-  );
+  }>("/settings/stitch", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(settings),
+  });
+}
+
+export async function thumbnailBlob(path: string): Promise<Blob> {
+  const token = getAuthToken();
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) throw new Error("Preview unavailable");
+  return response.blob();
+}
+export function regenerateJobs(jobIds: string[]) {
+  return request<{ task_id: string }>("/tasks", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ action: "regenerate_selected", job_ids: jobIds }),
+  });
 }

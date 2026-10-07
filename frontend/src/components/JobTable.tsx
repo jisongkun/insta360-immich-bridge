@@ -1,72 +1,82 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
-import clsx from 'clsx';
-import type { Job } from '../types';
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
+import clsx from "clsx";
+import { thumbnailBlob } from "../api";
+import type { Job } from "../types";
 
 interface JobTableProps {
   jobs: Job[];
+  onDetails: (job: Job) => void;
   isLoading: boolean;
   selectedJobs: Set<string>;
   onToggleJob: (jobId: string, selected: boolean) => void;
   onTogglePage: (jobIds: string[], selected: boolean) => void;
-  selectableStatuses: Set<Job['status']>;
+  selectableStatuses: Set<Job["status"]>;
 }
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
-type SortKey = 'timestamp' | 'stitched_size' | 'expected_size' | 'status' | 'type';
+type SortKey =
+  | "timestamp"
+  | "stitched_size"
+  | "expected_size"
+  | "status"
+  | "type";
 
 const SORT_OPTIONS: Array<{ value: SortKey; label: string }> = [
-  { value: 'timestamp', label: 'Timestamp' },
-  { value: 'stitched_size', label: 'Output Size' },
-  { value: 'expected_size', label: 'Expected Size' },
-  { value: 'status', label: 'Status' },
-  { value: 'type', label: 'Type' }
+  { value: "timestamp", label: "Timestamp" },
+  { value: "stitched_size", label: "Output Size" },
+  { value: "expected_size", label: "Expected Size" },
+  { value: "status", label: "Status" },
+  { value: "type", label: "Type" },
 ];
 
-type JobType = 'image' | 'video';
+type JobType = "image" | "video";
 
 const getJobType = (job: Job): JobType => {
-  if (job.final_file.toLowerCase().endsWith('.jpg') || job.final_file.toLowerCase().endsWith('.jpeg')) {
-    return 'image';
+  if (
+    job.final_file.toLowerCase().endsWith(".jpg") ||
+    job.final_file.toLowerCase().endsWith(".jpeg")
+  ) {
+    return "image";
   }
-  return 'video';
+  return "video";
 };
 
 const TYPE_OPTIONS: Array<{ value: JobType; label: string }> = [
-  { value: 'image', label: 'Image' },
-  { value: 'video', label: 'Video' }
+  { value: "image", label: "Image" },
+  { value: "video", label: "Video" },
 ];
 
 const typeLabels: Record<JobType, string> = {
-  image: 'Image',
-  video: 'Video'
+  image: "Image",
+  video: "Video",
 };
 
 const typeClasses: Record<JobType, string> = {
-  image: 'type-badge image',
-  video: 'type-badge video'
+  image: "type-badge image",
+  video: "type-badge video",
 };
 
-const statusLabels: Record<Job['status'], string> = {
-  unprocessed: 'Queued',
-  processing: 'Processing',
-  processed: 'Done',
-  failed: 'Failed'
+const statusLabels: Record<Job["status"], string> = {
+  unprocessed: "Queued",
+  processing: "Processing",
+  processed: "Done",
+  failed: "Failed",
 };
 
-const statusClasses: Record<Job['status'], string> = {
-  unprocessed: 'status-badge queued',
-  processing: 'status-badge running',
-  processed: 'status-badge success',
-  failed: 'status-badge failed'
+const statusClasses: Record<Job["status"], string> = {
+  unprocessed: "status-badge queued",
+  processing: "status-badge running",
+  processed: "status-badge success",
+  failed: "status-badge failed",
 };
 
-const STATUS_OPTIONS: Array<{ value: Job['status']; label: string }> = [
-  { value: 'unprocessed', label: 'Queued' },
-  { value: 'processing', label: 'Processing' },
-  { value: 'processed', label: 'Done' },
-  { value: 'failed', label: 'Failed' }
+const STATUS_OPTIONS: Array<{ value: Job["status"]; label: string }> = [
+  { value: "unprocessed", label: "Queued" },
+  { value: "processing", label: "Processing" },
+  { value: "processed", label: "Done" },
+  { value: "failed", label: "Failed" },
 ];
 
 function parseTimestampValue(timestamp: string): number {
@@ -82,14 +92,14 @@ function parseTimestampValue(timestamp: string): number {
   return Date.parse(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
 }
 
-const queueStateLabels: Record<'queued' | 'pending', string> = {
-  queued: 'Queued',
-  pending: 'Pending'
+const queueStateLabels: Record<"queued" | "pending", string> = {
+  queued: "Queued",
+  pending: "Pending",
 };
 
-const queueStateClasses: Record<'queued' | 'pending', string> = {
-  queued: 'status-badge queued',
-  pending: 'status-badge pending'
+const queueStateClasses: Record<"queued" | "pending", string> = {
+  queued: "status-badge queued",
+  pending: "status-badge pending",
 };
 
 const PREVIEW_SIZE = 512;
@@ -97,7 +107,7 @@ const PREVIEW_GAP = 12;
 
 const formatEta = (seconds: number | null | undefined): string => {
   if (!seconds || !Number.isFinite(seconds) || seconds <= 0) {
-    return '—';
+    return "—";
   }
   const total = Math.round(seconds);
   const hours = Math.floor(total / 3600);
@@ -119,8 +129,27 @@ interface EtaSample {
 }
 
 function ThumbnailCell({ url, alt }: { url: string; alt: string }) {
+  const [blobUrl, setBlobUrl] = useState<string>();
+  useEffect(() => {
+    let disposed = false;
+    let localUrl: string | undefined;
+    thumbnailBlob(url)
+      .then((blob) => {
+        localUrl = URL.createObjectURL(blob);
+        if (disposed) URL.revokeObjectURL(localUrl);
+        else setBlobUrl(localUrl);
+      })
+      .catch(() => setBlobUrl(undefined));
+    return () => {
+      disposed = true;
+      if (localUrl) URL.revokeObjectURL(localUrl);
+    };
+  }, [url]);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const [previewPos, setPreviewPos] = useState<{ top: number; left: number } | null>(null);
+  const [previewPos, setPreviewPos] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
 
   const handlePointerMove = (event: ReactMouseEvent<HTMLDivElement>) => {
     const wrapper = wrapperRef.current;
@@ -132,11 +161,17 @@ function ThumbnailCell({ url, alt }: { url: string; alt: string }) {
     const viewportWidth = window.innerWidth;
     const pointerY = event.clientY;
     const showAbove = viewportHeight - pointerY < PREVIEW_SIZE + PREVIEW_GAP;
-    let top = showAbove ? pointerY - PREVIEW_GAP - PREVIEW_SIZE : pointerY + PREVIEW_GAP;
+    let top = showAbove
+      ? pointerY - PREVIEW_GAP - PREVIEW_SIZE
+      : pointerY + PREVIEW_GAP;
     top = Math.min(Math.max(8, top), viewportHeight - PREVIEW_SIZE - 8);
     const spaceRight = viewportWidth - rect.right;
-    const showLeft = spaceRight < PREVIEW_SIZE + PREVIEW_GAP && rect.left - PREVIEW_GAP - PREVIEW_SIZE > 0;
-    let left = showLeft ? rect.left - PREVIEW_GAP - PREVIEW_SIZE : rect.right + PREVIEW_GAP;
+    const showLeft =
+      spaceRight < PREVIEW_SIZE + PREVIEW_GAP &&
+      rect.left - PREVIEW_GAP - PREVIEW_SIZE > 0;
+    let left = showLeft
+      ? rect.left - PREVIEW_GAP - PREVIEW_SIZE
+      : rect.right + PREVIEW_GAP;
     left = Math.min(Math.max(8, left), viewportWidth - PREVIEW_SIZE - 8);
     setPreviewPos({ top, left });
   };
@@ -149,11 +184,11 @@ function ThumbnailCell({ url, alt }: { url: string; alt: string }) {
       onMouseMove={handlePointerMove}
       onMouseLeave={() => setPreviewPos(null)}
     >
-      <img className="thumbnail" src={url} alt={alt} />
-      {previewPos && (
+      <img className="thumbnail" src={blobUrl} alt={alt} />
+      {previewPos && blobUrl && (
         <img
           className="thumbnail-preview"
-          src={url}
+          src={blobUrl}
           alt=""
           aria-hidden="true"
           style={{ top: previewPos.top, left: previewPos.left }}
@@ -165,9 +200,9 @@ function ThumbnailCell({ url, alt }: { url: string; alt: string }) {
 
 const formatBytes = (bytes: number) => {
   if (!bytes) {
-    return '0 B';
+    return "0 B";
   }
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const units = ["B", "KB", "MB", "GB", "TB"];
   let size = bytes;
   let unitIndex = 0;
   while (size >= 1024 && unitIndex < units.length - 1) {
@@ -191,19 +226,20 @@ export function JobTable({
   selectedJobs,
   onToggleJob,
   onTogglePage,
-  selectableStatuses
+  selectableStatuses,
+  onDetails,
 }: JobTableProps) {
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
   const [page, setPage] = useState(0);
-  const [sortKey, setSortKey] = useState<SortKey>('timestamp');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [sortKey, setSortKey] = useState<SortKey>("timestamp");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [statusFilterOpen, setStatusFilterOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<Set<Job['status']>>(
-    () => new Set(STATUS_OPTIONS.map((option) => option.value))
+  const [statusFilter, setStatusFilter] = useState<Set<Job["status"]>>(
+    () => new Set(STATUS_OPTIONS.map((option) => option.value)),
   );
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState<Set<JobType>>(
-    () => new Set(TYPE_OPTIONS.map((option) => option.value))
+    () => new Set(TYPE_OPTIONS.map((option) => option.value)),
   );
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
   const etaRef = useRef<Map<string, EtaSample>>(new Map());
@@ -224,22 +260,25 @@ export function JobTable({
   }, [jobs, statusFilter, typeFilter]);
 
   const sortedJobs = useMemo(() => {
-    const multiplier = sortDir === 'asc' ? 1 : -1;
+    const multiplier = sortDir === "asc" ? 1 : -1;
     return [...filteredJobs].sort((a, b) => {
       let result = 0;
-      if (sortKey === 'timestamp') {
+      if (sortKey === "timestamp") {
         const aTime = parseTimestampValue(a.timestamp);
         const bTime = parseTimestampValue(b.timestamp);
         result = aTime - bTime;
-      } else if (sortKey === 'status') {
+      } else if (sortKey === "status") {
         result = a.status.localeCompare(b.status);
-      } else if (sortKey === 'type') { // @ts-ignore
+      } else if (sortKey === "type") {
+        // @ts-ignore
         result = getJobType(a).localeCompare(getJobType(b));
       } else {
         result = (a[sortKey] ?? 0) - (b[sortKey] ?? 0);
       }
       if (result === 0) {
-        return parseTimestampValue(a.timestamp) - parseTimestampValue(b.timestamp);
+        return (
+          parseTimestampValue(a.timestamp) - parseTimestampValue(b.timestamp)
+        );
       }
       return result * multiplier;
     });
@@ -258,7 +297,8 @@ export function JobTable({
     .filter((job) => selectableStatuses.has(job.status))
     .map((job) => job.id);
   const allVisibleSelected =
-    selectablePageIds.length > 0 && selectablePageIds.every((id) => selectedJobs.has(id));
+    selectablePageIds.length > 0 &&
+    selectablePageIds.every((id) => selectedJobs.has(id));
   const someVisibleSelected =
     selectablePageIds.some((id) => selectedJobs.has(id)) && !allVisibleSelected;
 
@@ -274,11 +314,15 @@ export function JobTable({
     const seen = new Set<string>();
     jobs.forEach((job) => {
       seen.add(job.id);
-      const updatedAt = Date.parse(job.updated_at ?? '') || now;
+      const updatedAt = Date.parse(job.updated_at ?? "") || now;
       const prev = map.get(job.id);
       const processValue = job.process ?? 0;
-      if (job.status !== 'processing' || processValue <= 0) {
-        map.set(job.id, { process: processValue, timestamp: updatedAt, eta: null });
+      if (job.status !== "processing" || processValue <= 0) {
+        map.set(job.id, {
+          process: processValue,
+          timestamp: updatedAt,
+          eta: null,
+        });
         return;
       }
       if (prev && prev.timestamp === updatedAt) {
@@ -289,10 +333,14 @@ export function JobTable({
         const deltaTime = (updatedAt - prev.timestamp) / 1000;
         const rate = deltaTime > 0 ? deltaProcess / deltaTime : 0;
         const remaining = Math.max(0, 1 - processValue);
-        const eta = rate > 0 ? remaining / rate : prev.eta ?? null;
+        const eta = rate > 0 ? remaining / rate : (prev.eta ?? null);
         map.set(job.id, { process: processValue, timestamp: updatedAt, eta });
       } else {
-        map.set(job.id, { process: processValue, timestamp: updatedAt, eta: prev?.eta ?? null });
+        map.set(job.id, {
+          process: processValue,
+          timestamp: updatedAt,
+          eta: prev?.eta ?? null,
+        });
       }
     });
     for (const id of Array.from(map.keys())) {
@@ -357,10 +405,12 @@ export function JobTable({
             <button
               type="button"
               className="sort-direction"
-              onClick={() => setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+              onClick={() =>
+                setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+              }
               aria-label="Toggle sort direction"
             >
-              {sortDir === 'asc' ? '↑' : '↓'}
+              {sortDir === "asc" ? "↑" : "↓"}
             </button>
           </div>
           <div className="page-info">
@@ -376,7 +426,9 @@ export function JobTable({
                   type="checkbox"
                   className="select-checkbox"
                   checked={allVisibleSelected}
-                  onChange={(event) => onTogglePage(selectablePageIds, event.target.checked)}
+                  onChange={(event) =>
+                    onTogglePage(selectablePageIds, event.target.checked)
+                  }
                   disabled={selectablePageIds.length === 0}
                   aria-label="Select visible jobs"
                 />
@@ -397,13 +449,20 @@ export function JobTable({
                     <button
                       type="button"
                       className="status-filter-reset"
-                      onClick={() => setTypeFilter(new Set(TYPE_OPTIONS.map((option) => option.value)))}
+                      onClick={() =>
+                        setTypeFilter(
+                          new Set(TYPE_OPTIONS.map((option) => option.value)),
+                        )
+                      }
                     >
                       Show all
                     </button>
                     <div className="status-filter-list">
                       {TYPE_OPTIONS.map((option) => (
-                        <label key={option.value} className="status-filter-option">
+                        <label
+                          key={option.value}
+                          className="status-filter-option"
+                        >
                           <input
                             type="checkbox"
                             checked={typeFilter.has(option.value)}
@@ -439,13 +498,20 @@ export function JobTable({
                     <button
                       type="button"
                       className="status-filter-reset"
-                      onClick={() => setStatusFilter(new Set(STATUS_OPTIONS.map((option) => option.value)))}
+                      onClick={() =>
+                        setStatusFilter(
+                          new Set(STATUS_OPTIONS.map((option) => option.value)),
+                        )
+                      }
                     >
                       Show all
                     </button>
                     <div className="status-filter-list">
                       {STATUS_OPTIONS.map((option) => (
-                        <label key={option.value} className="status-filter-option">
+                        <label
+                          key={option.value}
+                          className="status-filter-option"
+                        >
                           <input
                             type="checkbox"
                             checked={statusFilter.has(option.value)}
@@ -479,14 +545,18 @@ export function JobTable({
             {paginatedJobs.map((job) => {
               const percent = Math.max(
                 0,
-                Math.min(100, Math.round((job.process ?? 0) * 100))
+                Math.min(100, Math.round((job.process ?? 0) * 100)),
               );
               const selectable = selectableStatuses.has(job.status);
               const queueState = job.queue_state ?? null;
               const badgeClass = statusClasses[job.status];
               const badgeLabel = statusLabels[job.status];
-              const queueBadgeClass = queueState ? queueStateClasses[queueState] : null;
-              const queueBadgeLabel = queueState ? queueStateLabels[queueState] : null;
+              const queueBadgeClass = queueState
+                ? queueStateClasses[queueState]
+                : null;
+              const queueBadgeLabel = queueState
+                ? queueStateLabels[queueState]
+                : null;
               const etaEntry = etaRef.current.get(job.id);
               return (
                 <tr key={job.id}>
@@ -496,42 +566,71 @@ export function JobTable({
                       className="select-checkbox"
                       checked={selectedJobs.has(job.id)}
                       disabled={!selectable}
-                      onChange={(event) => onToggleJob(job.id, event.target.checked)}
+                      onChange={(event) =>
+                        onToggleJob(job.id, event.target.checked)
+                      }
                       aria-label={`Select job ${job.timestamp}`}
                     />
                   </td>
                   <td>
                     {job.thumbnail_url ? (
-                      <ThumbnailCell url={job.thumbnail_url} alt={`Thumbnail for ${job.timestamp}`} />
+                      <ThumbnailCell
+                        url={job.thumbnail_url}
+                        alt={`Thumbnail for ${job.timestamp}`}
+                      />
                     ) : (
                       <span className="muted">None</span>
                     )}
                   </td>
-                  <td className="mono">{job.timestamp}</td>
+                  <td className="mono">
+                    <button
+                      className="ghost"
+                      type="button"
+                      onClick={() => onDetails(job)}
+                    >
+                      {job.timestamp}
+                    </button>
+                  </td>
                   <td>
-                    <span className={typeClasses[getJobType(job)]}>{typeLabels[getJobType(job)]}</span>
+                    <span className={typeClasses[getJobType(job)]}>
+                      {typeLabels[getJobType(job)]}
+                    </span>
                   </td>
                   <td>
                     <div className="status-cell">
                       <span className={clsx(badgeClass)}>{badgeLabel}</span>
+                      <small>{job.stage}</small>
+                      {job.remote_missing && (
+                        <small className="error">Immich asset missing</small>
+                      )}
+                      {job.replaced_by && <small>Superseded</small>}
+                      {job.error && (
+                        <small className="error">{job.error}</small>
+                      )}
                       {queueBadgeClass && queueBadgeLabel && (
-                        <span className={clsx(queueBadgeClass)}>{queueBadgeLabel}</span>
+                        <span className={clsx(queueBadgeClass)}>
+                          {queueBadgeLabel}
+                        </span>
                       )}
                     </div>
                   </td>
                   <td>
                     <div className="progress">
-                      <div className="progress-value" style={{ width: `${percent}%` }} />
+                      <div
+                        className="progress-value"
+                        style={{ width: `${percent}%` }}
+                      />
                     </div>
                     <small>
-                      {formatBytes(job.stitched_size)} / {formatBytes(job.expected_size)} ({percent}% )
+                      {formatBytes(job.stitched_size)} /{" "}
+                      {formatBytes(job.expected_size)} ({percent}% )
                     </small>
                   </td>
                   <td className="mono">{formatEta(etaEntry?.eta)}</td>
                   <td>
                     <div className="mono">{job.final_file}</div>
                   </td>
-                  <td className="mono">{job.pid ?? '—'}</td>
+                  <td className="mono">{job.pid ?? "—"}</td>
                   <td>{formatDate(job.updated_at)}</td>
                 </tr>
               );
@@ -551,13 +650,13 @@ export function JobTable({
         </button>
         {visiblePages.map((p, index) => {
           const prev = visiblePages[index - 1];
-          const needsEllipsis = typeof prev === 'number' && p - prev > 1;
+          const needsEllipsis = typeof prev === "number" && p - prev > 1;
           return (
             <span key={p} className="page-cluster">
               {needsEllipsis && <span className="ellipsis">…</span>}
               <button
                 type="button"
-                className={clsx('page-button', { active: p === page })}
+                className={clsx("page-button", { active: p === page })}
                 onClick={() => setPage(p)}
               >
                 {p + 1}
