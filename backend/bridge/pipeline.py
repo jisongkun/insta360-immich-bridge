@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from .discovery import hashes, snapshot
 from .validation import validate
+from .immich import ImmichError
 
 
 class Pipeline:
@@ -150,7 +151,17 @@ class Pipeline:
                     old = previous["asset_id"]
                     if old in {f.get("asset_id") for f in job["group"]["files"]}:
                         raise ValueError("Original asset cannot be replaced")
-                    state = self.client.asset(old)
+                    try:
+                        state = self.client.asset(old)
+                    except ImmichError as error:
+                        if error.status != 404:
+                            raise
+                        state = {"isTrashed": True}
+                        self.store.event(
+                            id,
+                            "previous_missing",
+                            "Previous export is missing; explicit regeneration continues without mutation",
+                        )
                     if not state.get("isTrashed"):
                         digest = self.client.download(
                             old, None, max_bytes=previous.get("output_bytes")

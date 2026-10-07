@@ -1,0 +1,26 @@
+{
+  "immich_url": "http://immich-server:2283",
+  "api_key_env": "IMMICH_API_KEY",
+  "folders": [],
+  "mappings": [{"from": "/usr/src/app/upload", "to": "/sources"}],
+  "download_sources": false,
+  "automatic": false,
+  "interval": 60,
+  "folder_interval": 600,
+  "stable_seconds": 60,
+  "full_interval": 86400,
+  "source_timezone": "Asia/Shanghai",
+  "stitch_parallelism": 1,
+  "profile": {
+    "output_size": "5760x2880",
+    "bitrate": "100000000",
+    "stitch_type": "dynamicstitch",
+    "auto_resolution": false,
+    "original_bitrate": false,
+    "enable_h265": true,
+    "enable_flowstate": true,
+    "enable_directionlock": true,
+    "enable_stitchfusion": true,
+    "disable_cuda": false
+  }
+}

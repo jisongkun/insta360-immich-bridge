@@ -129,12 +129,22 @@ def create_app(service):
             after = int(request.args.get("after", 0))
         except ValueError:
             raise ValueError("Invalid event cursor") from None
-        return jsonify(events=service.store.events(id, after))
+        return jsonify(
+            events=service.store.events(id, after)
+            if "after" in request.args
+            else service.store.recent_events(id)
+        )
 
     @app.get("/events")
     def global_events():
+        try:
+            after = int(request.args.get("after", 0))
+        except ValueError:
+            raise ValueError("Invalid event cursor") from None
         return jsonify(
-            events=service.store.events(None, int(request.args.get("after", 0)))
+            events=service.store.events(None, after)
+            if "after" in request.args
+            else service.store.recent_events(None)
         )
 
     @app.get("/jobs/<id>/details")

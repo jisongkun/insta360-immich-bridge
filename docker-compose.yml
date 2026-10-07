@@ -1,35 +1,35 @@
-# Insta360 autostitcher stack
-
+name: insta360-immich-bridge
 services:
   backend:
+    platform: linux/amd64
     build:
       context: ./backend
       args:
-        - MEDIA_SDK_DEB=${MEDIA_SDK_DEB:-libMediaSDK-dev_2.0-0_amd64_ubuntu18.04.deb}
-        - AI_STITCH_MODEL=${AI_STITCH_MODEL:-vendor/ai_stitch_model_v2.ins}
-    container_name: insta360-backend
-    env_file:
-      - .env
+        MEDIA_SDK_DEB: ${MEDIA_SDK_DEB:-vendor/MediaSDK-3.1.5-linux-amd64.deb}
+    env_file: .env
     environment:
-      APP_STORAGE_DIR: /app
-      AUTO_STITCHER_LOG_LEVEL: ${AUTO_STITCHER_LOG_LEVEL:-INFO}
+      BRIDGE_CONFIG: /config/bridge-config.json
+      BRIDGE_PORT: 8008
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,video,graphics
     runtime: nvidia
-    ports:
-      - "${AUTO_STITCHER_PORT:-8008}:8008"
+    init: true
+    restart: unless-stopped
     volumes:
-      - ${APP_STORAGE_DIR}:/app
-      - ${RAW_DIR}:/app/raw
-      - ${OUT_DIR}:/app/stitched
-
+      - ${BRIDGE_CONFIG_DIR:-./bridge-config}:/config
+      - ${BRIDGE_STATE_DIR:-./bridge-state}:/state
+      - ${BRIDGE_WORK_DIR:-./bridge-work}:/work
+      - ${SOURCE_DIR:-./sources}:/sources:ro
+    expose: ["8008"]
   frontend:
     build:
       context: ./frontend
       args:
-        - VITE_API_BASE=${VITE_API_BASE:-}
-    container_name: insta360-frontend
-    network_mode: host
+        VITE_API_BASE: ""
     environment:
-      NGINX_PORT: ${NGINX_PORT:-3000}
-      API_PROXY_TARGET: ${BACKEND_API_URL:-http://127.0.0.1:8000}
+      NGINX_PORT: 3000
+      API_PROXY_TARGET: http://backend:8008
+    ports:
+      - "${BRIDGE_BIND:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
+    depends_on: [backend]
+    restart: unless-stopped

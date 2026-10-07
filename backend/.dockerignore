@@ -1,0 +1,9 @@
+*
+!auto-sticher.py
+!convert_job.py
+!requirements.txt
+!bridge/
+!bridge/**
+!vendor/
+!vendor/MediaSDK-3.1.5-linux-amd64.deb
+bridge/**/__pycache__/

@@ -90,3 +90,12 @@ def test_effective_recipe_detects_sdk_model_changes_but_not_interval(tmp_path):
     assert c.changed({"interval": 120}).recipe() == before
     model.write_bytes(b"new weights")
     assert c.recipe() != before
+
+
+def test_recent_events_do_not_freeze_after_first_page(tmp_path):
+    s = Store(tmp_path / "state.db")
+    for i in range(505):
+        s.event(None, "scan", str(i))
+    recent = s.recent_events(None)
+    assert recent[-1]["message"] == "504" and recent[0]["message"] == "5"
+    assert s.events(None, after=recent[-2]["seq"])[-1]["message"] == "504"

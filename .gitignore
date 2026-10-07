@@ -27,3 +27,7 @@ frontend/dist/
 bridge-config.json
 bridge-state/
 bridge-work/
+bridge-config/
+sources/
+*.db-wal
+*.db-shm

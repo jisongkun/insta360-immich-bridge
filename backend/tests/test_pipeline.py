@@ -217,3 +217,25 @@ def test_api_transient_failure_has_bounded_retry_state(tmp_path):
     assert (
         job["retryable"] and job["retry_at"] > job["updated"] and job["attempts"] == 1
     )
+
+
+def test_explicit_regenerate_of_remotely_missing_receipt(tmp_path):
+    from bridge.immich import ImmichError
+
+    store, client, c, config, g, id, p = setup(tmp_path)
+    p.process(id, threading.Event())
+    old = store.job(id)["asset_id"]
+    c.data = b"new"
+    asset = client.asset
+
+    def read(id):
+        if id == old:
+            raise ImmichError(404)
+        return asset(id)
+
+    client.asset = read
+    new = store.enqueue(g, config.recipe(), store.job(id)["target"], force=True)
+    store.update(new, replace=True)
+    p.process(new, threading.Event())
+    assert store.job(new)["stage"] == "done"
+    assert "copy" not in client.actions and "trash" not in client.actions

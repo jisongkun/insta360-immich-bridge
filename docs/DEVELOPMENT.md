@@ -1,29 +1,44 @@
-# Insta360 Immich Bridge — development starting point
+# Insta360 Immich Bridge — development
 
-Created 2026-10-07 as a fork of `jagjordi/insta360-autostitcher`, baseline commit `d52ef69bdcdf09c16e25d3bf425b40e5447ed6dd`. Functional code is unchanged. This is not a working Immich integration yet.
+The checkout began at upstream `jagjordi/insta360-autostitcher` commit `d52ef69bdcdf09c16e25d3bf425b40e5447ed6dd` on 2026-10-07. The GitHub repository remains a fork, with GPL-3.0 and upstream attribution preserved. GitHub is source control only; Actions stay disabled. No NAS deployment has occurred.
 
-## Current product direction
+## Implemented boundary
 
-On 2026-10-07 the user selected an independent Insta360–Immich integration tool, using upstream features/code as reference rather than extending its controller architecture. Current functional code remains the upstream baseline; no integration has been implemented.
+New `backend/bridge/` modules own validated configuration, recursive/incremental discovery, durable SQLite claims/receipts, scheduling, authenticated API and Immich upload/replacement. The original `backend/auto-sticher.py` owns conversion, metadata injection, probes and thumbnail extraction. `convert_job.py` loads that module in an isolated subprocess, uses a private legacy DB/workspace, inserts one explicit job and calls its `_run_job`; it never starts the legacy scanner, HTTP server or debug-success mode.
 
-The reviewed-in-chat direction is: Immich API incremental discovery or configured recursive read-only folders → complete/stable source grouping → MediaSDK 3.1.5 → media/360 metadata validation → direct API upload and server-original hash verification → removal of the tool's local output copy, retaining Insta360 originals. Optional interval and manual triggering are both required. Parameter changes can explicitly regenerate outputs and replace the tool's previous exported assets through API upload, supported association migration and old-output soft deletion; source INSV/INSP are never deleted.
+Compatibility changes to legacy code are limited to SDK executable/model/log paths and flags, correctly configured thumbnail paths, explicit timezone-aware capture metadata and propagation of metadata injection failures. No new stitching algorithm or segment concatenation has been added. INSP remains JPG output, as upstream did. Distinct filename segments remain distinct jobs.
 
-The user reviewed the [design](superpowers/specs/2026-10-07-immich-integration-design.md) and requested development, with conversion entirely referencing/reusing the existing project and new development restricted to bridging plus required compatibility changes. Conversion will run through an isolated gateway; its legacy job database is not the bridge ledger. This supersedes the earlier inbox-first proposal. The existing GitHub repository remains a fork; attribution, license and history are preserved.
+## Durable state
 
-## Reference-code gaps (not an implementation plan)
+`/state/bridge.db` is the authority, not the legacy DB or presence of local MP4. Jobs carry immutable effective recipes, source content identities, target address/account, delivery phase and verification/ownership proofs. Claims are atomic, scoped by source+target. One process holds an OS lock for the state directory. The SQL schema is version 1; a newer schema refuses downgrade. Payload evolution currently remains in JSON.
 
-1. Replace single-level discovery in `backend/auto-sticher.py` with recursive traversal and same-directory pairing. Skip hidden paths and symlinks; wait for incomplete/changing sources.
-2. Use source identity and segment in job/output names; current timestamp-only output collides. Account for moved originals and duplicate copies.
-3. Add controlled automatic scanning and queueing. `SCAN_INTERVAL` is currently unused; `serve` only starts Flask.
-4. Adapt Dockerfile and CLI invocation for user-provided MediaSDK 3.1.5. GPU-enabled calls must omit `-disable_cuda`; replace old AI model argument with the new model root and resolve the SDK executable path.
-5. Validate decodability, dimensions, duration/audio, capture date and spherical metadata. SDK return code 0 plus an existing output is insufficient; metadata injection errors must block publication.
-6. Add a verified API delivery/replacement ledger independent of local output presence. Existing `deep_scan` resets missing output to unprocessed, so deleting local copies after upload otherwise causes repeat conversion. The existing inbox remains a separate service and is not this design's delivery path.
-7. Test actual P4 conversion, video pairs, single-file video and INSP. Do not assume 8K or every camera/photo mode works.
+Discovery groups by lens role, timestamp, segment and directory for folders, or target-scoped API names for Immich. It rejects ambiguous same-name/different-content roles. Stability uses persisted stat observations, then SHA-256/SHA-1 read with before/after checks. Source-content and media-probe caches avoid unnecessary rereads; API discovery still observes known paths without recursively walking the entire library.
 
-## Local checkout
+Incremental API discovery uses the server Date as upper bound and a 300-second overlap over `createdAt`/`updatedAt`, not capture date. The full paginated result is indexed before the watermark advances; network/pagination failure does not advance it. Daily full reconciliation checks sources and completed remote receipt presence without resetting completed jobs. Filename patterns remain the upstream VID/IMG timestamp/lens/segment forms; do not infer unsupported formats.
 
-- `origin`: https://github.com/jisongkun/insta360-immich-bridge.git
-- `upstream`: https://github.com/jagjordi/insta360-autostitcher.git
-- Default branch inherited from upstream: `master`.
-- SDK and model files are obtained separately and kept private. No SDK package or real media is included.
-- No Docker build, NAS deployment or media conversion has been performed for this fork.
+Upload has a persisted intent and uses Immich SHA-1 duplicate checking, then validates server-original size and streamed SHA-256. Receipt is committed before local cleanup. Replacement is explicit; upload/verify → verify old bytes → copy albums/favorite (optional shared links/stack; sidecar false) → soft trash old asset. Only bridge-owned outputs can be mutated. A lost upload response can resume verification of a duplicate, but cannot invent ownership. Original asset IDs are protected from replacement; source mounts are read-only.
+
+## API basis and SDK
+
+The reference API is Immich v3.2.4. Verified against official source: structured search sort permits fileCreatedAt, not createdAt; pattern `.like` uses case-insensitive SQL; upload checksum is SHA-1; copying associations does not replace binary content or preserve an ID; DELETE force false is soft deletion. The sync stream rejects API keys and is not used. The client checks 3.x minor >=2; actual deployed-server acceptance is still required.
+
+MediaSDK 3.1.5 was supplied privately by the user. SDK deb SHA-256 is recorded in `VALIDATION.md`. Executable `/opt/MediaSDK-3.1.5-linux/bin/MediaSDKTest`, models sibling `bin/models/`. GPU mode omits `-disable_cuda`; CLI checks its presence, so passing false would still disable it. Model root ends with `/`. The SDK sample may return 0 on error or skip missing-model features; task-specific native/stdout logs and actual media validation are both required.
+
+SDK/model bytes are included in effective recipe identity and checked again before executing queued work. Spatialmedia reuses the existing upstream dependency pinned to `37ec4220a7b3101864480c6c860b469204fd2a0a`; validation uses its real `parse_metadata` track map, not guessed interfaces.
+
+## Local validation
+
+Use Python 3.11+ and ignored `.venv` with `backend/requirements-dev.txt`. Run `PYTHONPATH=backend .venv/bin/python -m pytest backend/tests -q`. Legacy syntax without execution: `python3 -c "import ast,pathlib; ast.parse(pathlib.Path('backend/auto-sticher.py').read_text())"`. Frontend: `cd frontend && npm ci && npm run build`. Build/config evidence and outstanding Linux/real-camera acceptance belong in `docs/VALIDATION.md`.
+
+Tests use real temporary files/SQLite, loopback HTTP, tiny FFmpeg media and a simulated SDK subprocess through the original worker. Simulated SDK tests prove gateway behavior, not Insta360 media/GPU compatibility. Production acceptance must include actual single-file video, lens pairs, INSP, selected codec/FlowState/model modes, reconnect/restart and API replacement on the user's server.
+
+## Execution rulings
+
+- Ruling: tracked plan checkboxes and `docs/VALIDATION.md` hold implementation progress/findings — repository instructions prohibit file-based agent memory, so no Superpowers scratch memory ledger is created — cost is less granular transient journaling.
+- Ruling: one worker uses serial phases in a JSON job payload backed by transactional SQLite rather than many delivery tables/dataclasses — fewer dependencies and migrations for this initial bridge — cost is application-level payload typing and future migrations.
+- Ruling: parameter changes do not automatically overwrite completed exports; a replacement requires explicit selected-job action — matches approved design and protects original receipts — cost is a manual action when changing existing outputs.
+- Ruling: copy shared links/stack is opt-in JSON configuration; sidecar stays off — binary replacement changes asset ID and copying old sidecars can overwrite new capture metadata — cost is intentionally limited default association migration.
+- Ruling: upload-response loss preserves bytes and allows verification, but records conservative non-ownership — no reliable creation proof exists — cost is manual inspection before replacing that recovered asset.
+- Ruling: no deployment, real source media or Immich credentials are used for tests — current authorization is development and source push — Linux GPU/server acceptance remains outstanding.
+
+Deployment facts/policies live in `/Users/shinji/Developer/sjopswiki/projects/insta360-immich-bridge.md` and linked runbook. Read them and the target host policies before any NAS operations. SDKs/models, credentials, real media and state stay outside Git.

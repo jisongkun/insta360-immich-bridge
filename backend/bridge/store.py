@@ -171,3 +171,11 @@ class Store:
                     (job_id, after),
                 )
             ]
+
+    def recent_events(self, job_id):
+        with self.connection() as c:
+            rows = c.execute(
+                "SELECT * FROM events WHERE job_id IS ? ORDER BY seq DESC LIMIT 500",
+                (job_id,),
+            ).fetchall()
+        return [dict(r) for r in reversed(rows)]
