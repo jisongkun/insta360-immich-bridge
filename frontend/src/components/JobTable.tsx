@@ -105,29 +105,6 @@ const queueStateClasses: Record<"queued" | "pending", string> = {
 const PREVIEW_SIZE = 512;
 const PREVIEW_GAP = 12;
 
-const formatEta = (seconds: number | null | undefined): string => {
-  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) {
-    return "—";
-  }
-  const total = Math.round(seconds);
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const secs = total % 60;
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m ${secs}s`;
-  }
-  return `${secs}s`;
-};
-
-interface EtaSample {
-  process: number;
-  timestamp: number;
-  eta: number | null;
-}
-
 function ThumbnailCell({ url, alt }: { url: string; alt: string }) {
   const [blobUrl, setBlobUrl] = useState<string>();
   useEffect(() => {
@@ -242,7 +219,6 @@ export function JobTable({
     () => new Set(TYPE_OPTIONS.map((option) => option.value)),
   );
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
-  const etaRef = useRef<Map<string, EtaSample>>(new Map());
 
   useEffect(() => {
     setPage(0);
@@ -307,49 +283,6 @@ export function JobTable({
       headerCheckboxRef.current.indeterminate = someVisibleSelected;
     }
   }, [someVisibleSelected, allVisibleSelected, selectablePageIds.length]);
-
-  useEffect(() => {
-    const map = new Map(etaRef.current);
-    const now = Date.now();
-    const seen = new Set<string>();
-    jobs.forEach((job) => {
-      seen.add(job.id);
-      const updatedAt = Date.parse(job.updated_at ?? "") || now;
-      const prev = map.get(job.id);
-      const processValue = job.process ?? 0;
-      if (job.status !== "processing" || processValue <= 0) {
-        map.set(job.id, {
-          process: processValue,
-          timestamp: updatedAt,
-          eta: null,
-        });
-        return;
-      }
-      if (prev && prev.timestamp === updatedAt) {
-        return;
-      }
-      if (prev && processValue > prev.process && updatedAt > prev.timestamp) {
-        const deltaProcess = processValue - prev.process;
-        const deltaTime = (updatedAt - prev.timestamp) / 1000;
-        const rate = deltaTime > 0 ? deltaProcess / deltaTime : 0;
-        const remaining = Math.max(0, 1 - processValue);
-        const eta = rate > 0 ? remaining / rate : (prev.eta ?? null);
-        map.set(job.id, { process: processValue, timestamp: updatedAt, eta });
-      } else {
-        map.set(job.id, {
-          process: processValue,
-          timestamp: updatedAt,
-          eta: prev?.eta ?? null,
-        });
-      }
-    });
-    for (const id of Array.from(map.keys())) {
-      if (!seen.has(id)) {
-        map.delete(id);
-      }
-    }
-    etaRef.current = map;
-  }, [jobs]);
 
   const visiblePages = useMemo(() => {
     if (totalPages <= 7) {
@@ -534,8 +467,8 @@ export function JobTable({
                   </div>
                 )}
               </th>
-              <th>Progress</th>
-              <th>ETA</th>
+              <th>成片字节／估计容量</th>
+              <th>耗时</th>
               <th>Output</th>
               <th>PID</th>
               <th>Updated</th>
@@ -543,10 +476,6 @@ export function JobTable({
           </thead>
           <tbody>
             {paginatedJobs.map((job) => {
-              const percent = Math.max(
-                0,
-                Math.min(100, Math.round((job.process ?? 0) * 100)),
-              );
               const selectable = selectableStatuses.has(job.status);
               const queueState = job.queue_state ?? null;
               const badgeClass = statusClasses[job.status];
@@ -557,7 +486,6 @@ export function JobTable({
               const queueBadgeLabel = queueState
                 ? queueStateLabels[queueState]
                 : null;
-              const etaEntry = etaRef.current.get(job.id);
               return (
                 <tr key={job.id}>
                   <td className="select-column">
@@ -604,6 +532,11 @@ export function JobTable({
                         <small className="error">Immich asset missing</small>
                       )}
                       {job.replaced_by && <small>Superseded</small>}
+                      {job.blocked_by && (
+                        <small className="error">
+                          等待恢复前一版本 {job.blocked_by}
+                        </small>
+                      )}
                       {job.error && (
                         <small className="error">{job.error}</small>
                       )}
@@ -615,18 +548,22 @@ export function JobTable({
                     </div>
                   </td>
                   <td>
-                    <div className="progress">
-                      <div
-                        className="progress-value"
-                        style={{ width: `${percent}%` }}
-                      />
-                    </div>
                     <small>
                       {formatBytes(job.stitched_size)} /{" "}
-                      {formatBytes(job.expected_size)} ({percent}% )
+                      {formatBytes(job.expected_size)}（容量估算）
                     </small>
                   </td>
-                  <td className="mono">{formatEta(etaEntry?.eta)}</td>
+                  <td className="mono">
+                    {Math.max(
+                      0,
+                      Math.round(
+                        (Date.parse(job.updated_at) -
+                          Date.parse(job.created_at)) /
+                          1000,
+                      ),
+                    )}{" "}
+                    s
+                  </td>
                   <td>
                     <div className="mono">{job.final_file}</div>
                   </td>

@@ -1,6 +1,8 @@
+import { useState } from "react";
+import { useEventLog, eventLevel, saveLog } from "../hooks/useEventLog";
 import { useQuery } from "@tanstack/react-query";
 import { request } from "../api";
-import type { BridgeEvent, Job } from "../types";
+import type { Job } from "../types";
 
 export function BridgeJobDetails({
   job,
@@ -9,11 +11,8 @@ export function BridgeJobDetails({
   job: Job;
   onClose: () => void;
 }) {
-  const events = useQuery({
-    queryKey: ["job-events", job.id],
-    queryFn: () => request<{ events: BridgeEvent[] }>(`/jobs/${job.id}/events`),
-    refetchInterval: 2000,
-  });
+  const events = useEventLog(`/jobs/${job.id}/events`);
+  const [level, setLevel] = useState("all");
   const logs = useQuery({
     queryKey: ["job-logs", job.id],
     queryFn: () =>
@@ -23,7 +22,8 @@ export function BridgeJobDetails({
         error?: string;
         logs: Array<{ name: string; text: string }>;
       }>(`/jobs/${job.id}/logs`),
-    refetchInterval: 3000,
+    enabled: !events.paused,
+    refetchInterval: events.paused ? false : 3000,
   });
   const details = useQuery({
     queryKey: ["job-details", job.id],
@@ -54,12 +54,52 @@ export function BridgeJobDetails({
           <summary>原片、目标和有效参数</summary>
           <pre>{JSON.stringify(details.data, null, 2)}</pre>
         </details>
-        <h4>阶段事件</h4>
-        {events.data?.events.map((e) => (
-          <div key={e.seq} className="mono">
-            {new Date(e.at * 1000).toLocaleString()} [{e.stage}] {e.message}
-          </div>
-        ))}
+        <div className="action-buttons">
+          <button
+            className="ghost"
+            onClick={() => events.setPaused(!events.paused)}
+          >
+            {events.paused ? "继续日志" : "暂停日志"}
+          </button>
+          <select
+            aria-label="事件级别"
+            value={level}
+            onChange={(e) => setLevel(e.target.value)}
+          >
+            <option value="all">全部级别</option>
+            <option value="error">错误</option>
+            <option value="warn">警告</option>
+            <option value="info">信息</option>
+          </select>
+          <button
+            className="ghost"
+            onClick={() =>
+              saveLog(
+                `bridge-${job.id}.log`,
+                (events.data ?? [])
+                  .map(
+                    (e) =>
+                      `${new Date(e.at * 1000).toISOString()} [${eventLevel(e)}] [${e.stage}] ${e.message}`,
+                  )
+                  .join("\n") +
+                  "\n\n" +
+                  (logs.data?.logs ?? [])
+                    .map((l) => `${l.name}\n${l.text}`)
+                    .join("\n\n"),
+              )
+            }
+          >
+            下载已加载日志
+          </button>
+        </div>
+        <h4>阶段事件（最多保留 5000 条；级别按事件阶段分类）</h4>
+        {events.data
+          ?.filter((e) => level === "all" || eventLevel(e) === level)
+          .map((e) => (
+            <div key={e.seq} className="mono">
+              {new Date(e.at * 1000).toLocaleString()} [{e.stage}] {e.message}
+            </div>
+          ))}
         <h4>SDK／转换日志（每文件末尾 64 KiB）</h4>
         {logs.data?.logs.map((l) => (
           <details key={l.name} open>

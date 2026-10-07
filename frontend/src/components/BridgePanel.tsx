@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { request, triggerTask } from "../api";
-import type { BridgeSettings, BridgeEvent, StatusResponse } from "../types";
+import { useEventLog } from "../hooks/useEventLog";
+import type { BridgeSettings, StatusResponse } from "../types";
 
 export function BridgePanel({
   status,
@@ -16,12 +17,7 @@ export function BridgePanel({
     queryFn: () => request<BridgeSettings>("/settings/bridge"),
     enabled,
   });
-  const events = useQuery({
-    queryKey: ["bridge-events"],
-    queryFn: () => request<{ events: BridgeEvent[] }>("/events"),
-    enabled,
-    refetchInterval: 5000,
-  });
+  const events = useEventLog("/events", enabled);
   const [draft, setDraft] = useState<BridgeSettings>();
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -40,6 +36,8 @@ export function BridgePanel({
         exclusions,
         download_sources,
         automatic,
+        automatic_photos,
+        api_source_enabled,
         interval,
         folder_interval,
         stable_seconds,
@@ -59,6 +57,8 @@ export function BridgePanel({
           exclusions,
           download_sources,
           automatic,
+          automatic_photos,
+          api_source_enabled,
           interval,
           folder_interval,
           stable_seconds,
@@ -90,7 +90,7 @@ export function BridgePanel({
   ) {
     setDraft((d) => (d ? { ...d, [key]: value } : d));
   }
-  const recent = events.data?.events.slice(-10) ?? [];
+  const recent = events.data?.slice(-10) ?? [];
   return (
     <section className="panel bridge-panel">
       <div className="actions-header">
@@ -182,6 +182,14 @@ export function BridgePanel({
           <label>
             <input
               type="checkbox"
+              checked={draft.api_source_enabled}
+              onChange={(e) => change("api_source_enabled", e.target.checked)}
+            />
+            从 Immich API 发现原片（关闭后仅扫描指定目录）
+          </label>
+          <label>
+            <input
+              type="checkbox"
               checked={draft.download_sources}
               onChange={(e) => change("download_sources", e.target.checked)}
             />
@@ -267,6 +275,14 @@ export function BridgePanel({
               onChange={(e) => change("automatic", e.target.checked)}
             />
             按间隔自动发现并处理
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={draft.automatic_photos}
+              onChange={(e) => change("automatic_photos", e.target.checked)}
+            />
+            自动处理 INSP 照片（默认关闭，需独立样本验收）
           </label>
           {(
             [

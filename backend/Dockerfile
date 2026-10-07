@@ -21,6 +21,19 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && test -x /opt/MediaSDK-3.1.5-linux/bin/MediaSDKTest \
     && rm -rf /var/lib/apt/lists/* /tmp/MediaSDK.deb /tmp/requirements.txt
 
+# SDK's bundled OpenCV still links TIFF ABI 5 and GTK 3, omitted from its deb Depends.
+# Pin the official Jammy security compatibility package; never alias TIFF ABI 6.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get -o Acquire::Retries=3 update \
+    && apt-get -o Acquire::Retries=3 install -y --no-install-recommends curl libgtk-3-0t64 \
+    && curl --fail --retry 3 -o /tmp/libtiff5.deb https://security.ubuntu.com/ubuntu/pool/main/t/tiff/libtiff5_4.3.0-6ubuntu0.13_amd64.deb \
+    && echo "298a778a6a579a556f6bb4e32512cd76e0483b57b4a379ee85397f62fe21f225  /tmp/libtiff5.deb" | sha256sum -c - \
+    && apt-get install -y /tmp/libtiff5.deb \
+    && ! ldd /opt/MediaSDK-3.1.5-linux/bin/MediaSDKTest | grep 'not found' \
+    && ( /opt/MediaSDK-3.1.5-linux/bin/MediaSDKTest -help >/tmp/sdk-help.log 2>&1; test $? -eq 255 ) \
+    && grep -q -- "-model_root_dir" /tmp/sdk-help.log \
+    && rm -rf /var/lib/apt/lists/* /tmp/libtiff5.deb /tmp/sdk-help.log
+
 WORKDIR /opt/insta360
 COPY auto-sticher.py convert_job.py ./
 COPY bridge ./bridge

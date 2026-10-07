@@ -4,10 +4,57 @@ import signal
 import subprocess
 import sys
 import uuid
+import shutil
+from .validation import probe
 from pathlib import Path
 
 
 class Converter:
+    @staticmethod
+    def effective_profile(group, profile):
+        if not profile.get("auto_resolution"):
+            return profile
+        source = probe(group["files"][0]["path"])
+        spherical = any(
+            d.get("side_data_type") == "Spherical Mapping"
+            and d.get("projection") == "equirectangular"
+            for stream in source["raw"]["streams"]
+            for d in stream.get("side_data_list", [])
+        )
+        if (
+            group["kind"] != "video"
+            or not spherical
+            or source["width"] != 2 * source["height"]
+        ):
+            raise ValueError(
+                "Unknown source projection: select fixed output dimensions before stitching"
+            )
+        if source["width"] % 2 or source["height"] % 2:
+            raise ValueError(
+                "Invalid source dimensions: select fixed output dimensions"
+            )
+        return {
+            **profile,
+            "auto_resolution": False,
+            "output_size": f"{source['width']}x{source['height']}",
+        }
+
+    @staticmethod
+    def check_space(group, profile, config):
+        root = Path(config.data["work_dir"])
+        root.mkdir(parents=True, exist_ok=True)
+        source_bytes = sum(f["stat"][2] for f in group["files"])
+        estimate = source_bytes * 4
+        if group["kind"] == "video" and group["files"]:
+            source = probe(group["files"][0]["path"])
+            estimate = max(
+                estimate, int(source["duration"] * int(profile["bitrate"]) / 8) * 3
+            )
+        if shutil.disk_usage(root).free < estimate + 1024**3:
+            raise ValueError(
+                "Insufficient workspace space: allow estimated temporary output plus 1 GiB reserve"
+            )
+
     def manifest(self, job_id, group, profile, root):
         ext = "jpg" if group["kind"] == "photo" else "mp4"
         return {

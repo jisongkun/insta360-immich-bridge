@@ -125,16 +125,19 @@ class ImmichClient:
     def download(self, asset_id, destination, max_bytes=None):
         digest = hashlib.sha256()
         count = 0
-        with self.request(
-            "GET", f"/assets/{asset_id}/original", stream=True
-        ) as response:
-            for chunk in response.iter_content(1024 * 1024):
-                count += len(chunk)
-                if max_bytes is not None and count > max_bytes:
-                    raise ValueError("Server original exceeds expected size")
-                digest.update(chunk)
-                if destination is not None:
-                    destination.write(chunk)
+        try:
+            with self.request(
+                "GET", f"/assets/{asset_id}/original", stream=True
+            ) as response:
+                for chunk in response.iter_content(1024 * 1024):
+                    count += len(chunk)
+                    if max_bytes is not None and count > max_bytes:
+                        raise ValueError("Server original exceeds expected size")
+                    digest.update(chunk)
+                    if destination is not None:
+                        destination.write(chunk)
+        except requests.RequestException:
+            raise ImmichError() from None
         if max_bytes is not None and count != max_bytes:
             raise ValueError("Server original size differs")
         return digest.hexdigest()

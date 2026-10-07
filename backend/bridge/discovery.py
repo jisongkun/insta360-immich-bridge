@@ -3,6 +3,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -90,6 +92,67 @@ def observe(path, name, scope, asset_id, config, store, now):
     }
 
 
+def source_capture_time(file, config):
+    fallback = (
+        datetime.strptime(file["timestamp"], "%Y%m%d_%H%M%S")
+        .replace(tzinfo=ZoneInfo(config.data["source_timezone"]))
+        .isoformat()
+    )
+    try:
+        if file["kind"] == "photo" and shutil.which("exiftool"):
+            result = subprocess.run(
+                [
+                    "exiftool",
+                    "-j",
+                    "-DateTimeOriginal",
+                    "-OffsetTimeOriginal",
+                    "-d",
+                    "%Y-%m-%dT%H:%M:%S",
+                    file["path"],
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            tags = json.loads(result.stdout)[0] if result.returncode == 0 else {}
+            value = tags.get("DateTimeOriginal", "") + tags.get(
+                "OffsetTimeOriginal", ""
+            )
+        else:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format_tags=creation_time:stream_tags=creation_time",
+                    "-of",
+                    "json",
+                    file["path"],
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            data = json.loads(result.stdout) if result.returncode == 0 else {}
+            value = data.get("format", {}).get("tags", {}).get("creation_time") or next(
+                (
+                    x.get("tags", {}).get("creation_time")
+                    for x in data.get("streams", [])
+                    if x.get("tags", {}).get("creation_time")
+                ),
+                "",
+            )
+        date = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if date.year < 1971:
+            return fallback, "filename"
+        if date.tzinfo is None:
+            date = date.replace(tzinfo=ZoneInfo(config.data["source_timezone"]))
+        return date.isoformat(), "metadata"
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+        return fallback, "filename"
+
+
 def group_files(files, config, store):
     candidates = {}
     groups = {}
@@ -131,11 +194,12 @@ def group_files(files, config, store):
                 + [("segment", first["segment"])]
             ).encode()
         ).hexdigest()
-        capture = (
-            datetime.strptime(first["timestamp"], "%Y%m%d_%H%M%S")
-            .replace(tzinfo=ZoneInfo(config.data["source_timezone"]))
-            .isoformat()
-        )
+        date_key = "capture:" + first["sha256"] + ":" + config.data["source_timezone"]
+        date = store.get(date_key)
+        if date is None:
+            date = source_capture_time(first, config)
+            store.set(date_key, date)
+        capture, capture_origin = date
         groups[identity] = {
             "id": identity,
             "files": source,
@@ -143,6 +207,7 @@ def group_files(files, config, store):
             "segment": first["segment"],
             "kind": first["kind"],
             "capture_time": capture,
+            "capture_origin": capture_origin,
         }
     return list(groups.values())
 

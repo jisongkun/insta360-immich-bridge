@@ -27,6 +27,8 @@ DEFAULTS = dict(
     download_sources=False,
     exclusions=[],
     automatic=False,
+    automatic_photos=False,
+    api_source_enabled=True,
     interval=60,
     folder_interval=600,
     stable_seconds=60,
@@ -102,6 +104,8 @@ class BridgeConfig:
                 raise ValueError(f"{key} cannot exceed 64")
         for key in (
             "automatic",
+            "automatic_photos",
+            "api_source_enabled",
             "download_sources",
             "replace_shared_links",
             "replace_stack",
@@ -240,6 +244,6 @@ class BridgeConfig:
             "sdk_binary_sha256": self.file_identity(self.data["sdk_executable"]),
             "model_root": self.data["model_root"],
             "models_sha256": model_identity,
-            "metadata_version": 1,
+            "metadata_version": 2,
             "source_timezone": self.data["source_timezone"],
         }

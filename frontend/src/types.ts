@@ -24,6 +24,7 @@ export interface Job {
   replaced_by?: string;
   local_deleted: boolean;
   recipe: string;
+  blocked_by?: string;
 }
 
 export interface StatusResponse {
@@ -81,6 +82,8 @@ export interface BridgeSettings {
   exclusions: string[];
   download_sources: boolean;
   automatic: boolean;
+  automatic_photos: boolean;
+  api_source_enabled: boolean;
   interval: number;
   folder_interval: number;
   stable_seconds: number;

@@ -156,6 +156,8 @@ def create_app(service):
             target=job["target"],
             recipe=job["recipe"],
             previous=job.get("previous"),
+            effective_profile=job.get("effective_profile"),
+            blocked_by=job.get("blocked_by"),
         )
 
     @app.get("/jobs/<id>/logs")

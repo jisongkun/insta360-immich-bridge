@@ -58,6 +58,9 @@ class Service:
         )
         handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
         self.log.addHandler(handler)
+        console = logging.StreamHandler()
+        console.setFormatter(handler.formatter)
+        self.log.addHandler(console)
         self.connection = self.store.get("connection", {})
         self.thread = None
 
@@ -106,7 +109,7 @@ class Service:
             self.store.set("last_folder_attempt", now)
         if full:
             self.store.set("last_full_attempt", now)
-        if api and config.data["immich_url"]:
+        if api and config.data["api_source_enabled"] and config.data["immich_url"]:
             client, target = self.connect()
             groups += discover_immich(client, config, self.store, full)
             self.store.set("last_api_scan", time.time())
@@ -184,16 +187,18 @@ class Service:
                 raise ValueError("Select current verified exports owned by this bridge")
         result = []
         for job in jobs:
-            from zoneinfo import ZoneInfo
+            group = job["group"]
+            if group.get("capture_origin", "filename") == "filename":
+                from zoneinfo import ZoneInfo
 
-            group = {
-                **job["group"],
-                "capture_time": datetime.strptime(
-                    job["group"]["timestamp"], "%Y%m%d_%H%M%S"
-                )
-                .replace(tzinfo=ZoneInfo(self.config.data["source_timezone"]))
-                .isoformat(),
-            }
+                group = {
+                    **group,
+                    "capture_time": datetime.strptime(
+                        group["timestamp"], "%Y%m%d_%H%M%S"
+                    )
+                    .replace(tzinfo=ZoneInfo(self.config.data["source_timezone"]))
+                    .isoformat(),
+                }
             new = self.store.enqueue(
                 group, self.config.recipe(), job["target"], force=True
             )
@@ -212,13 +217,19 @@ class Service:
             result.append(new)
         return result
 
-    def run_jobs(self, ids=None, retry=False, cancel=None):
+    def run_jobs(self, ids=None, retry=False, cancel=None, automatic=False):
         client, target = self.connect()
         config = self.config
         cancel = cancel or threading.Event()
         jobs = [self.store.job(id) for id in ids] if ids else self.store.jobs()
         eligible = []
         for job in reversed(jobs):
+            if (
+                automatic
+                and job["group"].get("kind") == "photo"
+                and not config.data["automatic_photos"]
+            ):
+                continue
             if job["target"] != target or job["stage"] == "done":
                 continue
             if job["stage"] in ("failed", "cancelled") and not retry:
@@ -383,11 +394,13 @@ class Service:
                 return
         full = (
             bool(self.config.data["immich_url"])
+            and self.config.data["api_source_enabled"]
             and now - self.store.get("last_full_attempt", 0)
             >= self.config.data["full_interval"]
         )
         api = (
             bool(self.config.data["immich_url"])
+            and self.config.data["api_source_enabled"]
             and now - self.store.get("last_api_attempt", 0)
             >= self.config.data["interval"]
         )
@@ -414,11 +427,19 @@ class Service:
                     if full or api or folder:
                         self.scan(full, folders=folder, api=api or full)
                     if not cancel.is_set():
-                        self.run_jobs(cancel=cancel)
+                        self.run_jobs(cancel=cancel, automatic=True)
                         if retries:
-                            self.run_jobs(retries, retry=True, cancel=cancel)
+                            self.run_jobs(
+                                retries, retry=True, cancel=cancel, automatic=True
+                            )
                     if any(
-                        j.get("http_status") in (401, 403)
+                        (
+                            j.get("http_status") == 401
+                            or (
+                                j.get("http_status") == 403
+                                and j.get("phase") != "replacing"
+                            )
+                        )
                         for j in self.store.jobs()
                         if j["stage"] == "failed" and j["updated"] >= since
                     ):
@@ -478,11 +499,14 @@ class Service:
 
     def start(self):
         # Resume only work previously requested, including delivery after local output cleanup.
-        if any(
-            j.get("run_requested") and j["stage"] not in ("done", "failed", "cancelled")
+        resume = [
+            j["id"]
             for j in self.store.jobs()
-        ):
-            self.submit("stitch")
+            if j.get("run_requested")
+            and j["stage"] not in ("done", "failed", "cancelled")
+        ]
+        if resume:
+            self.submit("stitch", resume)
 
         def loop():
             while not self.stop.wait(1):
@@ -588,6 +612,7 @@ class Service:
                     remote_missing=j.get("remote_missing", False),
                     replaced_by=j.get("replaced_by"),
                     recipe=j["recipe"],
+                    blocked_by=j.get("blocked_by"),
                     local_deleted=j.get("local_deleted", False),
                 )
             )
@@ -619,7 +644,9 @@ class Service:
                 time.time(),
                 self.store.get("last_api_attempt", 0) + self.config.data["interval"],
             )
-            if self.config.data["automatic"] and self.config.data["immich_url"]
+            if self.config.data["automatic"]
+            and self.config.data["immich_url"]
+            and self.config.data["api_source_enabled"]
             else None,
             next_folder_scan=max(
                 time.time(),

@@ -23,6 +23,8 @@ Linux AMD64 + NVIDIA GPU + NVIDIA Container Toolkit。用只读挂载映射原�
 | 设置 | 默认 | 用途 |
 |---|---:|---|
 | automatic | false | 手动启用定时发现及处理 |
+| api_source_enabled | true | API 原片发现，独立于上传地址 |
+| automatic_photos | false | 自动照片处理需显式开启 |
 | interval | 60 秒 | Immich 增量发现 |
 | folder_interval | 600 秒 | 额外目录扫描 |
 | stable_seconds | 60 秒 | 两次观察之间原片大小/时间等未变化 |
@@ -33,7 +35,7 @@ Linux AMD64 + NVIDIA GPU + NVIDIA Container Toolkit。用只读挂载映射原�
 | bitrate | 100000000 | 100 Mbps；可选择跟随原始码率 |
 | stitch_type | dynamicstitch | 也支持原有 optflow/aistitch |
 
-保留 H.265、FlowState、方向锁定、Stitch Fusion、CUDA 开关、自动尺寸、原始码率、预计大小比率、缩略图、排序／分页／多选、失败重试。方向锁定要求 FlowState。百分比和 ETA 来自原转换器估算；“完成”以服务器核验为准。
+保留 H.265、FlowState、方向锁定、Stitch Fusion、CUDA 开关、自动尺寸、原始码率、预计大小比率、缩略图、排序／分页／多选、失败重试。方向锁定要求 FlowState。界面显示阶段、耗时和成片字节／容量估算，不把大小比例当作完成进度。自动尺寸只接受已确认的 2:1 等距柱状投影；未知原片须指定固定尺寸。转换前检查预计临时空间并保留 1 GiB 余量。拍摄日期优先读取原片元数据，文件名与配置时区仅作回退。
 
 ## 启动
 
@@ -60,13 +62,15 @@ docker compose up -d
 
 `mappings.from` 对应 API 返回的 `originalPath` 前缀，`to` 对应本工具里的只读挂载前缀，例如服务器 `/usr/src/app/upload` → 本工具 `/sources`。按真实 API 返回路径配置，不能凭宿主机文件名猜测。额外目录填容器内路径，例如 `/sources/insta360`；会包含其子目录，跳过隐藏文件、符号链接和排除模式。原片不存在或映射不对时失败并保留状态，不把缺失来源当作已处理。
 
+仅扫描指定目录时，设置 `api_source_enabled: false` 并填写 `folders`；上传仍使用同一个 Immich 地址和 Key，不会查询 API 原片列表。
+
 只使用 API 下载原片时，设置 `download_sources: true`，`mappings: []`、`folders: []`；可不挂真实来源目录。缓存不自动删除远端原片，也不把缓存当作要替换的 Immich 资产。
 
 ## API Key 与登录
 
 **允许使用 API Key。** Key 从环境变量 `IMMICH_API_KEY`（或 `api_key_env` 指定的名字）读取，也可使用 `api_key_file` 的只读文件；文件引用优先。Key 不写入 JSON、任务、manifest 或日志。文件方式需自己为 Compose 添加只读 secret 挂载。网页只配置引用名称／路径，实际 Key 在服务器 `.env` 或 secret 文件设置。
 
-Key 应属于目标图库账号。需要 `user.read`、`server.about`、`asset.read`、`asset.upload`、`asset.download`；替换额外需要 `asset.copy`、`asset.delete`，以及所选关联复制所需权限。只有发现／上传时不必提供删除权限。权限不足的操作显示 401/403 并暂停自动运行；修复 Key 后测试连接并手动重试。当前客户端使用 Immich 3.2 的结构化搜索形状，以 [v3.2.4 源码](https://github.com/immich-app/immich/tree/v3.2.4/server/src)为依据；3.2+ 同大版本需在你的服务器验收，低于 3.2 或新大版本会拒绝。没有使用只允许 Session 的 sync stream。
+Key 应属于目标图库账号。需要 `user.read`、`server.about`、`asset.read`、`asset.upload`、`asset.download`；替换额外需要 `asset.copy`、`asset.delete`，以及所选关联复制所需权限。只有发现／上传时不必提供删除权限。401 或基础读取／上传的 403 会暂停自动运行；替换阶段缺少复制／删除权限的 403 只阻断该原片的版本切换，其他新片仍可正常入库。修复 Key 后测试连接并手动重试。当前客户端使用 Immich 3.2 的结构化搜索形状，以 [v3.2.4 源码](https://github.com/immich-app/immich/tree/v3.2.4/server/src)为依据；3.2+ 同大版本需在你的服务器验收，低于 3.2 或新大版本会拒绝。没有使用只允许 Session 的 sync stream。
 
 `BRIDGE_LOGIN_TOKEN` 是本工具网页/API 的独立访问令牌，与 Immich Key 不同，必须设置。所有状态、日志、设置和缩略图接口都需要 Bearer 登录；缩略图通过认证 fetch 加载。旋转到同一账号的 Immich Key 不影响去重；换地址或账号会创建新的目标范围，不继承旧交付凭据。
 
@@ -76,11 +80,11 @@ Key 应属于目标图库账号。需要 `user.read`、`server.about`、`asset.r
 
 新旧 asset ID 不保持一致。默认不复制 shared links、stack、sidecar；JSON 可显式开启 `replace_shared_links`、`replace_stack`，sidecar 始终关闭。不删除来源 INSV/INSP。字节相同且 ID 相同则保留资产；遇到不属于本工具的重复资产，不能借此删除旧导出或修改重复资产。上传响应丢失时可找回同字节资产并核验，但不凭猜测授予所有权，因此需要替换的情况可能停下要求人工检查。
 
-旧资产字节发生变化时停止替换。复制失败或回收失败保留新旧资产，可重试交付步骤而不用再次转换。旧成片已经被人永久删除时用显式恢复导出操作处理，自动检查仅显示缺失，不重置原片任务。
+旧资产字节发生变化时停止替换。复制失败或回收失败保留新旧资产，可重试交付步骤而不用再次转换。同一原片未完成的版本持续占用交付顺序；新版本显示阻塞任务 ID，必须先恢复前一版本，避免重启后留下多个当前导出。旧成片已经被人永久删除时用显式恢复导出操作处理，自动检查仅显示缺失，不重置原片任务。
 
 ## 日志和恢复
 
-- 网页全局日志显示扫描、连接、调度和失败摘要。点击任务时间查看有效参数、来源路径、目标账号、阶段事件和 SDK/转换日志。
+- 网页全局日志显示扫描、连接、调度和失败摘要。点击任务时间查看有效参数、来源路径、目标账号、阶段事件和 SDK/转换日志。事件按序号补读，重连继续；可暂停、按事件级别筛选、下载已加载日志（SDK 文件末尾 64 KiB）。
 - `/state/logs/bridge.log` 按大小轮转，默认每文件 10 MiB、5 个备份。
 - `/work/jobs/<job-id>/<attempt-id>/` 保留 manifest、独立转换数据库、result、SDK 原生日志和控制器日志。每个 SDK/转换日志默认最多 10 MiB；超限停止转换，不上传。
 - 默认成功日志保留 14 天，失败／未完成日志 30 天，每天清理。任务/交付凭据不会跟随日志删除。API 日志读取每文件末尾 64 KiB，最多 10 个文件。

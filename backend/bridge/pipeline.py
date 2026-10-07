@@ -5,6 +5,7 @@ from pathlib import Path
 from .discovery import hashes, snapshot
 from .validation import validate
 from .immich import ImmichError
+from .converter import Converter
 
 
 class Pipeline:
@@ -30,14 +31,22 @@ class Pipeline:
             raise ValueError("Source must never be a cleanup target")
         return path
 
+    @staticmethod
+    def check_cancel(cancel):
+        if cancel.is_set():
+            raise InterruptedError("Task cancelled at a safe boundary")
+
     def process(self, id, cancel):
         if not self.store.claim(id):
             return
         try:
+            self.store.update(id, blocked_by=None)
+            self.check_cancel(cancel)
             job = self.store.job(id)
             identity = self.client.identify()
             if self.client.base + "|" + identity["user_id"] != job["target"]:
                 raise ValueError("Immich target account changed; delivery blocked")
+            self.check_cancel(cancel)
             phase = job.get("phase", "pending")
             if phase in ("pending", "converting"):
                 # Refresh only before conversion. Another requested generation may have
@@ -81,10 +90,13 @@ class Pipeline:
                         raise ValueError(
                             "Source changed before conversion; discover again"
                         )
+                effective = Converter.effective_profile(job["group"], job["profile"])
+                Converter.check_space(job["group"], effective, self.config)
+                self.store.update(id, effective_profile=effective)
                 output = self.converter.convert(
                     id,
                     job["group"],
-                    job["profile"],
+                    effective,
                     self.config,
                     cancel,
                     lambda stage, fields: self.checkpoint(id, stage, **fields),
@@ -94,7 +106,9 @@ class Pipeline:
                 job = self.store.job(id)
             if phase == "validating":
                 output = self.safe_output(job)
-                self.validator(output, job["group"], job["profile"])
+                self.validator(
+                    output, job["group"], job.get("effective_profile", job["profile"])
+                )
                 sha256, sha1 = hashes(output)
                 self.checkpoint(
                     id,
@@ -112,6 +126,7 @@ class Pipeline:
                 if hashes(output) != (job["output_sha256"], job["output_sha1"]):
                     raise ValueError("Local export changed before upload")
                 result = self.client.find_checksum(job["output_sha1"])
+                self.check_cancel(cancel)
                 if result is None:
                     result = self.client.upload(
                         output, job["group"]["capture_time"], job["output_sha1"]
@@ -124,8 +139,10 @@ class Pipeline:
                 phase = "verifying"
                 job = self.store.job(id)
             if phase == "verifying":
+                self.check_cancel(cancel)
                 if self.client.asset(job["asset_id"]).get("isTrashed"):
                     raise ValueError("Export is in Immich trash")
+                self.check_cancel(cancel)
                 digest = self.client.download(
                     job["asset_id"], None, max_bytes=job["output_bytes"]
                 )
@@ -138,6 +155,7 @@ class Pipeline:
                 phase = "replacing"
                 job = self.store.job(id)
             if phase == "replacing":
+                self.check_cancel(cancel)
                 previous = job.get("previous")
                 if previous and previous.get("asset_id") != job["asset_id"]:
                     if (
@@ -162,6 +180,7 @@ class Pipeline:
                             "previous_missing",
                             "Previous export is missing; explicit regeneration continues without mutation",
                         )
+                    self.check_cancel(cancel)
                     if not state.get("isTrashed"):
                         digest = self.client.download(
                             old, None, max_bytes=previous.get("output_bytes")
@@ -170,6 +189,7 @@ class Pipeline:
                             raise ValueError(
                                 "Previous export changed; replacement stopped"
                             )
+                        self.check_cancel(cancel)
                         if not job.get("copied"):
                             self.client.copy(
                                 old,
@@ -187,6 +207,7 @@ class Pipeline:
                             )
                             self.store.update(id, copied=True)
                         # Readback on resume resolves an uncertain trash response.
+                        self.check_cancel(cancel)
                         self.client.trash(old)
                         if not self.client.asset(old).get("isTrashed"):
                             raise ValueError(
@@ -199,10 +220,12 @@ class Pipeline:
                             and prior.get("asset_id") == old
                         ):
                             self.store.update(prior["id"], replaced_by=id)
+                self.check_cancel(cancel)
                 self.checkpoint(id, "cleanup")
                 phase = "cleanup"
                 job = self.store.job(id)
             if phase == "cleanup":
+                self.check_cancel(cancel)
                 if not job.get("verified"):
                     raise ValueError("Cannot clean unverified output")
                 output = self.safe_output(job)

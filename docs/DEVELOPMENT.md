@@ -42,3 +42,12 @@ Tests use real temporary files/SQLite, loopback HTTP, tiny FFmpeg media and a si
 - Ruling: no deployment, real source media or Immich credentials are used for tests — current authorization is development and source push — Linux GPU/server acceptance remains outstanding.
 
 Deployment facts/policies live in `/Users/shinji/Developer/sjopswiki/projects/insta360-immich-bridge.md` and linked runbook. Read them and the target host policies before any NAS operations. SDKs/models, credentials, real media and state stay outside Git.
+
+## Final-review corrections
+
+- Cancel checks separate external delivery operations. A verified receipt may be committed after an in-flight download completes, but cancellation blocks association copy, trash and local cleanup at the next boundary.
+- Any unresolved conversion/delivery phase retains source+target lineage beyond a live claim, including failure, cancellation and restart. Later generations display the blocking job and resume only after it completes. Startup dispatch is limited to persisted requested IDs.
+- `api_source_enabled` is independent of destination URL; folder-only input can still upload. `automatic_photos` defaults false. Replacement-only 403 does not pause ordinary new-video processing; streaming response exceptions retain retryability.
+- Capture metadata precedes filename timezone fallback and survives regeneration. Effective auto dimensions require positive projection evidence, are snapshotted, and are passed to the original worker as fixed dimensions; unknown projection requires explicit fixed parameters. Space preflight reserves estimated temporary output plus 1 GiB.
+- UI removed size-based percentage/ETA; size ratio remains capacity information. Event cursors support reconnection, task log pause/filter and loaded-log download.
+- SDK loader verification exposed missing GTK3/TIFF ABI5 dependencies absent from the vendor deb. Ubuntu 24.04 supplies GTK3; ABI5 uses the pinned official [Jammy security package](https://packages.ubuntu.com/jammy/amd64/libtiff5/download), SHA-256 `298a778a6a579a556f6bb4e32512cd76e0483b57b4a379ee85397f62fe21f225`. Never symlink TIFF ABI6 to ABI5. Vendor `-help` prints help then returns 255 because it also requires input; the build explicitly checks both expected return and required help flag.

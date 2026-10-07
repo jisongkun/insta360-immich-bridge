@@ -2,7 +2,12 @@
   "immich_url": "http://immich-server:2283",
   "api_key_env": "IMMICH_API_KEY",
   "folders": [],
-  "mappings": [{"from": "/usr/src/app/upload", "to": "/sources"}],
+  "mappings": [
+    {
+      "from": "/usr/src/app/upload",
+      "to": "/sources"
+    }
+  ],
   "download_sources": false,
   "automatic": false,
   "interval": 60,
@@ -22,5 +27,7 @@
     "enable_directionlock": true,
     "enable_stitchfusion": true,
     "disable_cuda": false
-  }
+  },
+  "api_source_enabled": true,
+  "automatic_photos": false
 }

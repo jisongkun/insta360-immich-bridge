@@ -25,7 +25,7 @@ Deb control reports package `mediasdk`, version 3.1.5, architecture amd64, insta
 
 Local Docker context verified `desktop-linux` with user's local Unix socket, not a remote/NAS daemon. Compose schema validation succeeded with example environment and `--no-env-resolution`; backend has no host port, source mount is `:ro`, frontend proxies backend:8008 through internal network, state/work are separate. Actual `compose up` has not run.
 
-First Linux AMD64 image build failed while fetching Ubuntu packages from archive.ubuntu.com through the local fake-IP network, before SDK installation. Retry uses official HTTPS repositories and apt retry/cache, with unnecessary developer packages removed. Final build/load result is recorded below when available.
+First Linux AMD64 image build failed while fetching Ubuntu packages from archive.ubuntu.com through the local fake-IP network, before SDK installation. Retry uses official HTTPS repositories and apt retry/cache, with unnecessary developer packages removed. Retry built the image, then explicit SDK startup exposed TIFF ABI5 and GTK3 omissions in vendor dependencies. Added pinned official Ubuntu compatibility package and loader/help checks; final result below.
 
 ## Commands and final results
 
@@ -35,7 +35,11 @@ First Linux AMD64 image build failed while fetching Ubuntu packages from archive
 - `ruff check backend/bridge backend/convert_job.py backend/tests --select F` → all checks passed; new Python code formatted.
 - `docker compose --env-file <example-env> config --no-env-resolution -q` → exit 0.
 - `git diff --check` → exit 0.
-- Fresh independent review and final Docker build result pending.
+- Fresh whole-branch review found seven important gaps; failing regressions reproduced cancellation after verify, unfinished replacement lineage, restart scope, folder-only API coupling, stream truncation retryability, replacement permission isolation and default automatic photo exclusion. Fixes implemented and targeted tests passed. Metadata priority/regeneration, projection blocking and workspace-space tests also added.
+- Updated full suite: **39 passed in 50.66s**; frontend build **84 modules, 328 ms**; AST, ruff F and diff checks passed.
+- Linux AMD64 Docker image built successfully after loader corrections. `ldd` has no missing libraries; actual `MediaSDKTest -help` prints **SDK version 3.1.5**, model-root and native CLI flags, exits **255** as expected from vendor input validation. This proves loader/help startup on local emulation, not GPU/media conversion.
+- GitHub Actions permissions readback: **enabled=false**. No Actions run or deployment performed.
+- Final fresh review of corrections and final source push results recorded below.
 
 ## Remaining acceptance
 

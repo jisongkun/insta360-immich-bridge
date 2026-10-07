@@ -114,6 +114,39 @@ class Store:
                 ).fetchone()
             ):
                 return False
+            if job:
+                unfinished = c.execute(
+                    "SELECT id,payload FROM jobs WHERE source_id=? AND target=? AND id!=? AND stage!='done'",
+                    (job["source_id"], job["target"], job_id),
+                ).fetchall()
+                # An unresolved conversion/delivery retains the source lineage across failure,
+                # cancellation and restart. Resume it before another export can take over.
+                blockers = [
+                    r["id"]
+                    for r in unfinished
+                    if json.loads(r["payload"]).get("phase", "pending") != "pending"
+                ]
+                if blockers:
+                    row = c.execute(
+                        "SELECT payload FROM jobs WHERE id=?", (job_id,)
+                    ).fetchone()
+                    payload = json.loads(row[0])
+                    if payload.get("blocked_by") != blockers[0]:
+                        payload["blocked_by"] = blockers[0]
+                        c.execute(
+                            "UPDATE jobs SET payload=? WHERE id=?",
+                            (json.dumps(payload), job_id),
+                        )
+                        c.execute(
+                            "INSERT INTO events(job_id,stage,message,at) VALUES(?,?,?,?)",
+                            (
+                                job_id,
+                                "blocked",
+                                "Resume unfinished generation " + blockers[0],
+                                time.time(),
+                            ),
+                        )
+                    return False
             return (
                 c.execute(
                     "UPDATE jobs SET claimed=1 WHERE id=? AND claimed=0 AND stage NOT IN ('done','cancelled')",

@@ -46,6 +46,13 @@ def server():
                 value = {"assets": {"items": [], "nextCursor": None}}
             if self.path.endswith("/original"):
                 data = b"original"
+                if "/truncated/" in self.path:
+                    self.send_response(200)
+                    self.send_header("Content-Length", "100")
+                    self.end_headers()
+                    self.wfile.write(data)
+                    self.close_connection = True
+                    return
             else:
                 data = json.dumps(value).encode()
             self.send_response(200)
@@ -93,3 +100,11 @@ def test_search_copy_and_soft_delete(server):
         client.asset("bad")
     assert error.value.status == 401
     assert "secret" not in str(error.value)
+
+
+def test_truncated_download_is_retryable(server):
+    url, _ = server
+    client = ImmichClient(url, "credential")
+    with pytest.raises(ImmichError) as error:
+        client.download("truncated", None)
+    assert error.value.retryable and error.value.status == 0
