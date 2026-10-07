@@ -8,7 +8,7 @@ On 2026-10-07 the user selected an independent Insta360–Immich integration too
 
 The reviewed-in-chat direction is: Immich API incremental discovery or configured recursive read-only folders → complete/stable source grouping → MediaSDK 3.1.5 → media/360 metadata validation → direct API upload and server-original hash verification → removal of the tool's local output copy, retaining Insta360 originals. Optional interval and manual triggering are both required. Parameter changes can explicitly regenerate outputs and replace the tool's previous exported assets through API upload, supported association migration and old-output soft deletion; source INSV/INSP are never deleted.
 
-See [the design awaiting document review](superpowers/specs/2026-10-07-immich-integration-design.md). This supersedes the earlier inbox-first proposal. The existing GitHub repository remains a fork; attribution, license and history are preserved.
+The user reviewed the [design](superpowers/specs/2026-10-07-immich-integration-design.md) and requested development, with conversion entirely referencing/reusing the existing project and new development restricted to bridging plus required compatibility changes. Conversion will run through an isolated gateway; its legacy job database is not the bridge ledger. This supersedes the earlier inbox-first proposal. The existing GitHub repository remains a fork; attribution, license and history are preserved.
 
 ## Reference-code gaps (not an implementation plan)
 
