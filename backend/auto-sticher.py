@@ -1176,6 +1176,7 @@ class AutoStitcher:
         ):
             if enabled:
                 cmd.append(flag)
+        if getattr(self, "sdk_log_file", None):cmd.extend(["--log_file", self.sdk_log_file])
         cmd.extend(["--log_level", "info", "-stitch_type", self.stitch_type, "-output", output])
         return cmd
 
