@@ -7,3 +7,13 @@ backend/test/raw/VID_20251227_133347_00_045.insv
 backend/test/raw/test.mp4
 backend/test/stitched/VID_20251227_133347.log
 .env
+
+# Local SDK packages, models and runtime media/state
+*.deb
+*.ins
+*.insv
+*.insp
+*.lrv
+*.sqlite3
+*.db
+.DS_Store
