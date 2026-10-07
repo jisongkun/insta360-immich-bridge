@@ -1,3 +1,4 @@
+from .cancellation import check_cancel
 import hashlib
 import re
 from email.utils import parsedate_to_datetime
@@ -122,7 +123,8 @@ class ImmichClient:
     def asset(self, asset_id):
         return self.json("GET", f"/assets/{asset_id}")
 
-    def download(self, asset_id, destination, max_bytes=None):
+    def download(self, asset_id, destination, max_bytes=None, cancel=None):
+        check_cancel(cancel)
         digest = hashlib.sha256()
         count = 0
         try:
@@ -130,6 +132,7 @@ class ImmichClient:
                 "GET", f"/assets/{asset_id}/original", stream=True
             ) as response:
                 for chunk in response.iter_content(1024 * 1024):
+                    check_cancel(cancel)
                     count += len(chunk)
                     if max_bytes is not None and count > max_bytes:
                         raise ValueError("Server original exceeds expected size")

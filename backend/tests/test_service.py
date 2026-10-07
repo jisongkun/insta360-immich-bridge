@@ -57,7 +57,7 @@ def test_single_owner_and_scheduler_manual_coalescing(tmp_path, monkeypatch):
     called = []
     release = threading.Event()
 
-    def scan(full=False, folders=True, api=True):
+    def scan(full=False, folders=True, api=True, cancel=None):
         called.append(full)
         release.wait(2)
 

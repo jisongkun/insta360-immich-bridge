@@ -198,15 +198,19 @@ class BridgeConfig:
             temp.replace(self.path)
 
     def public(self):
-        return json.loads(json.dumps(self.data))
+        return {
+            **json.loads(json.dumps(self.data)),
+            "api_key_configured": bool(self.key()),
+        }
 
     def key(self):
         file = self.data["api_key_file"]
-        return (
-            Path(file).read_text().strip()
-            if file
-            else os.getenv(self.data["api_key_env"], "")
-        )
+        if file:
+            try:
+                return Path(file).read_text().strip()
+            except (OSError, UnicodeError):
+                return ""
+        return os.getenv(self.data["api_key_env"], "")
 
     def file_identity(self, path):
         path = Path(path)

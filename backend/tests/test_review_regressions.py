@@ -97,7 +97,7 @@ def test_folder_source_can_disable_api_discovery(tmp_path, monkeypatch):
         lambda *a: (_ for _ in ()).throw(AssertionError("API discovery used")),
     )
     monkeypatch.setattr(
-        "bridge.service.discover_folders", lambda *a: called.append("folder") or []
+        "bridge.service.discover_folders", lambda *a, **k: called.append("folder") or []
     )
     service.scan()
     assert called == ["folder"]

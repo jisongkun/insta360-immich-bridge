@@ -630,7 +630,7 @@ tr:hover {
 }
 
 .bridge-panel { margin-bottom: 1rem; }
-.bridge-settings { display: grid; gap: 0.75rem; max-width: 960px; margin: 1rem 0; }
+.bridge-settings { border: 1px solid #cbd5e1; border-radius: 8px; padding: 1rem; min-width: 0; display: grid; gap: 0.75rem; max-width: 960px; margin: 1rem 0; }
 .bridge-settings label { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
 .bridge-settings input:not([type=checkbox]), .bridge-settings textarea { flex: 1; min-width: 200px; padding: .5rem; background: #fff; color: #1e293b; border: 1px solid #667085; border-radius: 5px; }
 .mapping-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
@@ -638,3 +638,7 @@ tr:hover {
 .job-details pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; }
 .status-cell small { display: block; max-width: 250px; }
 .bridge-panel details { margin-top: 1rem; overflow-wrap: anywhere; }
+
+.bridge-settings legend { font-weight: 600; padding: 0 .4rem; }
+.bridge-settings details label { margin-top: .75rem; }
+.bridge-settings .action-buttons { justify-content: flex-end; border-top: 1px solid #cbd5e1; padding-top: .75rem; }

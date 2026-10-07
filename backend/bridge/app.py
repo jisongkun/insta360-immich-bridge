@@ -92,7 +92,7 @@ def create_app(service):
             or value <= 0
         ):
             raise ValueError("Invalid estimated size ratio")
-        service.store.set("expected_ratio", value)
+        service.configure({"expected_size_ratio": value})
         return jsonify(expected_size_ratio=value)
 
     @app.post("/settings/ratio/compute")
@@ -106,7 +106,6 @@ def create_app(service):
         if not raw:
             raise ValueError("No verified export sizes available yet")
         value = sum(j["output_bytes"] for j in rows) / raw
-        service.store.set("expected_ratio", value)
         return jsonify(expected_size_ratio=value)
 
     @app.post("/tasks")

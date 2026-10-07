@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { request, triggerTask } from "../api";
+import { request, triggerTask, terminateTask } from "../api";
 import { useEventLog } from "../hooks/useEventLog";
 import type { BridgeSettings, StatusResponse } from "../types";
 
@@ -20,13 +20,14 @@ export function BridgePanel({
   const events = useEventLog("/events", enabled);
   const [draft, setDraft] = useState<BridgeSettings>();
   const [open, setOpen] = useState(false);
+  const [apiKey, setApiKey] = useState("");
   useEffect(() => {
-    if (settings.data) setDraft(structuredClone(settings.data));
-  }, [settings.data]);
+    if (settings.data && !open) setDraft(structuredClone(settings.data));
+  }, [settings.data, open]);
   const save = useMutation({
     mutationFn: async () => {
       if (!draft) return;
-      // Submit only fields editable here, never state/work paths or actual credentials.
+      // The key is write-only; the server stores it separately from configuration.
       const {
         immich_url,
         api_key_env,
@@ -45,11 +46,12 @@ export function BridgePanel({
         source_timezone,
         profile,
       } = draft;
-      return request("/settings/bridge", {
+      return request<BridgeSettings>("/settings/bridge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           immich_url,
+          immich_api_key: apiKey,
           api_key_env,
           api_key_file,
           folders,
@@ -74,7 +76,9 @@ export function BridgePanel({
         }),
       });
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
+      if (saved) cache.setQueryData(["bridge-settings"], saved);
+      setApiKey("");
       setOpen(false);
       cache.invalidateQueries({ queryKey: ["bridge-settings"] });
       cache.invalidateQueries({ queryKey: ["status"] });
@@ -84,6 +88,18 @@ export function BridgePanel({
     mutationFn: triggerTask,
     onSuccess: () => cache.invalidateQueries({ queryKey: ["status"] }),
   });
+  const stop = useMutation({
+    mutationFn: terminateTask,
+    onSuccess: () => cache.invalidateQueries({ queryKey: ["status"] }),
+  });
+  const busy =
+    !enabled || action.isPending || Boolean(status?.active_tasks?.length);
+  function discard() {
+    setDraft(settings.data ? structuredClone(settings.data) : undefined);
+    setApiKey("");
+    save.reset();
+    setOpen(false);
+  }
   function change<K extends keyof BridgeSettings>(
     key: K,
     value: BridgeSettings[K],
@@ -95,8 +111,18 @@ export function BridgePanel({
     <section className="panel bridge-panel">
       <div className="actions-header">
         <h2>Immich Integration</h2>
-        <button className="ghost" onClick={() => setOpen(!open)}>
-          Connection and Discovery Settings
+        <button
+          className="ghost"
+          disabled={!enabled || save.isPending}
+          onClick={() => {
+            if (open) discard();
+            else {
+              discard();
+              setOpen(true);
+            }
+          }}
+        >
+          {open ? "Cancel Changes" : "Connection and Discovery Settings"}
         </button>
       </div>
       <p>
@@ -123,14 +149,14 @@ export function BridgePanel({
         <button
           className="primary"
           onClick={() => action.mutate("test_connection")}
-          disabled={action.isPending}
+          disabled={busy || open}
         >
           Test Connection
         </button>
         <button
           className="primary"
           onClick={() => action.mutate("full_run")}
-          disabled={action.isPending}
+          disabled={busy || open}
         >
           Discover and Process Now
         </button>
@@ -138,22 +164,19 @@ export function BridgePanel({
           <button
             className="ghost"
             key={t.id}
-            onClick={() =>
-              request("/tasks/terminate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ task_id: t.id }),
-              }).then(() => cache.invalidateQueries({ queryKey: ["status"] }))
-            }
+            disabled={stop.isPending}
+            onClick={() => stop.mutate(t.id)}
           >
             Stop {t.action}
           </button>
         ))}
       </div>
       {action.isError && <p className="error">{action.error.message}</p>}
+      {stop.isError && <p className="error">{stop.error.message}</p>}
       {settings.isError && <p className="error">{settings.error.message}</p>}
       {open && draft && (
-        <div className="bridge-settings">
+        <fieldset className="bridge-settings" disabled={save.isPending}>
+          <legend>Connection and Discovery Settings</legend>
           <label>
             Immich URL
             <input
@@ -162,26 +185,42 @@ export function BridgePanel({
               placeholder="https://photos.example.com"
             />
           </label>
-          <p className="muted">
-            The API key is read from a server environment variable or a
-            read-only secret file. Its value is excluded from settings responses
-            and job logs. A configured file takes priority.
+          <label>
+            Immich API Key
+            <input
+              type="password"
+              autoComplete="off"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Leave blank to keep the existing key"
+            />
+          </label>
+          <p className="muted" role="status">
+            {draft.api_key_configured
+              ? "An API key is configured."
+              : "No readable API key is configured."}{" "}
+            A new key is saved privately on the server and is never returned
+            here. Leave it blank to keep the current key. Save before testing
+            the connection.
           </p>
-          <label>
-            API Key Environment Variable
-            <input
-              value={draft.api_key_env}
-              onChange={(e) => change("api_key_env", e.target.value)}
-            />
-          </label>
-          <label>
-            API Key File Path
-            <input
-              value={draft.api_key_file}
-              onChange={(e) => change("api_key_file", e.target.value)}
-              placeholder="/run/secrets/immich-key"
-            />
-          </label>
+          <details>
+            <summary>Advanced credential source (environment or file)</summary>
+            <label>
+              API Key Environment Variable
+              <input
+                value={draft.api_key_env}
+                onChange={(e) => change("api_key_env", e.target.value)}
+              />
+            </label>
+            <label>
+              API Key File Path
+              <input
+                value={draft.api_key_file}
+                onChange={(e) => change("api_key_file", e.target.value)}
+                placeholder="/run/secrets/immich-key"
+              />
+            </label>
+          </details>
           <label>
             <input
               type="checkbox"
@@ -359,15 +398,20 @@ export function BridgePanel({
               }
             </label>
           ))}
-          <button
-            className="primary"
-            disabled={save.isPending}
-            onClick={() => save.mutate()}
-          >
-            {save.isPending ? "Saving…" : "Save Settings"}
-          </button>
+          <div className="action-buttons">
+            <button className="ghost" onClick={discard}>
+              Cancel
+            </button>
+            <button
+              className="primary"
+              disabled={save.isPending}
+              onClick={() => save.mutate()}
+            >
+              {save.isPending ? "Saving…" : "Save Settings"}
+            </button>
+          </div>
           {save.isError && <p className="error">{save.error.message}</p>}
-        </div>
+        </fieldset>
       )}
       <details>
         <summary>Recent Activity</summary>

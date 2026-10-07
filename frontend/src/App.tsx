@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -11,12 +11,10 @@ import {
   stitchSelectedJobs,
   triggerTask,
   terminateTask,
-  updateExpectedRatio,
-  updateParallelism,
+  request,
   computeExpectedRatio,
-  updateStitchSettings,
 } from "./api";
-import type { Job, TaskAction } from "./types";
+import type { BridgeSettings, StatusResponse, Job, TaskAction } from "./types";
 import { JobTable } from "./components/JobTable";
 import { BridgePanel } from "./components/BridgePanel";
 import { BridgeJobDetails } from "./components/BridgeJobDetails";
@@ -74,7 +72,7 @@ const statusOrder: Record<TaskAction | "status", number> = {
 };
 
 export default function App() {
-  const [detailsJob, setDetailsJob] = useState<Job | null>(null);
+  const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const [pollingFast, setPollingFast] = useState(false);
   const statusQuery = useQuery({
@@ -94,8 +92,10 @@ export default function App() {
   });
 
   const jobs = statusQuery.data?.jobs ?? [];
+  const detailsJob = jobs.find((job) => job.id === detailsJobId);
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsGeneration = useRef(0);
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginTokenValue, setLoginTokenValue] = useState("");
   const [activeTask, setActiveTask] = useState<{
@@ -104,11 +104,19 @@ export default function App() {
   } | null>(null);
   const [lastTaskTriggeredAt, setLastTaskTriggeredAt] = useState(0);
   const [confirmStop, setConfirmStop] = useState(false);
-  const [stitchConcurrencyValue, setStitchConcurrencyValue] = useState(1);
-  const [scanConcurrencyValue, setScanConcurrencyValue] = useState(25);
-  const [deepScanConcurrencyValue, setDeepScanConcurrencyValue] = useState(1);
-  const [thumbnailConcurrencyValue, setThumbnailConcurrencyValue] = useState(4);
-  const [ratioValue, setRatioValue] = useState(1);
+  const [stitchConcurrencyValue, setStitchConcurrencyValue] = useState<
+    number | string
+  >(1);
+  const [scanConcurrencyValue, setScanConcurrencyValue] = useState<
+    number | string
+  >(25);
+  const [deepScanConcurrencyValue, setDeepScanConcurrencyValue] = useState<
+    number | string
+  >(1);
+  const [thumbnailConcurrencyValue, setThumbnailConcurrencyValue] = useState<
+    number | string
+  >(4);
+  const [ratioValue, setRatioValue] = useState<number | string>(1);
   const [outputSizeValue, setOutputSizeValue] = useState("");
   const [bitrateValue, setBitrateValue] = useState("");
   const [stitchTypeValue, setStitchTypeValue] = useState("");
@@ -134,53 +142,65 @@ export default function App() {
 
   const settingsMutation = useMutation({
     mutationFn: async () => {
-      const sanitizedStitchConcurrency = Math.max(
-        1,
-        Math.round(stitchConcurrencyValue),
-      );
-      const sanitizedScanConcurrency = Math.max(
-        1,
-        Math.round(scanConcurrencyValue),
-      );
-      const sanitizedDeepConcurrency = Math.max(
-        1,
-        Math.round(deepScanConcurrencyValue),
-      );
-      const sanitizedThumbnailConcurrency = Math.max(
-        1,
-        Math.round(thumbnailConcurrencyValue),
-      );
+      const sanitizedStitchConcurrency = Number(stitchConcurrencyValue);
+      const sanitizedScanConcurrency = Number(scanConcurrencyValue);
+      const sanitizedDeepConcurrency = Number(deepScanConcurrencyValue);
+      const sanitizedThumbnailConcurrency = Number(thumbnailConcurrencyValue);
       const sanitizedOutput = outputSizeValue.trim();
       const sanitizedBitrate = bitrateValue.trim();
       const sanitizedStitchType = stitchTypeValue.trim();
-      await Promise.all([
-        updateParallelism({
+      const saved = await request<BridgeSettings>("/settings/bridge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           stitch_parallelism: sanitizedStitchConcurrency,
           scan_parallelism: sanitizedScanConcurrency,
           deep_scan_parallelism: sanitizedDeepConcurrency,
           thumbnail_parallelism: sanitizedThumbnailConcurrency,
+          expected_size_ratio: Number(ratioValue),
+          profile: {
+            output_size: sanitizedOutput,
+            bitrate: sanitizedBitrate,
+            stitch_type: sanitizedStitchType,
+            auto_resolution: autoResolution,
+            original_bitrate: originalBitrate,
+          },
         }),
-        updateExpectedRatio(ratioValue),
-        updateStitchSettings({
-          output_size: sanitizedOutput,
-          bitrate: sanitizedBitrate,
-          stitch_type: sanitizedStitchType,
-          auto_resolution: autoResolution,
-          original_bitrate: originalBitrate,
-        }),
-      ]);
+      });
+      return {
+        saved,
+        ratio: Number(ratioValue),
+        concurrency: {
+          stitch: sanitizedStitchConcurrency,
+          scan: sanitizedScanConcurrency,
+          deep_scan: sanitizedDeepConcurrency,
+          thumbnails: sanitizedThumbnailConcurrency,
+        },
+      };
     },
-    onSuccess: () => {
+    onSuccess: ({ saved, ratio, concurrency }) => {
+      queryClient.setQueryData(["bridge-settings"], saved);
+      queryClient.setQueryData<StatusResponse>(["status"], (previous) =>
+        previous
+          ? {
+              ...previous,
+              stitch_settings: saved.profile,
+              expected_size_ratio: ratio,
+              concurrency,
+              max_parallel_jobs: concurrency.stitch,
+            }
+          : previous,
+      );
       queryClient.invalidateQueries({ queryKey: ["status"] });
-      setSettingsOpen(false);
+      closeSettings();
     },
   });
 
   const computeRatioMutation = useMutation({
-    mutationFn: () => computeExpectedRatio(),
-    onSuccess: (data) => {
-      setRatioValue(data.expected_size_ratio);
-      queryClient.invalidateQueries({ queryKey: ["status"] });
+    mutationFn: (_generation: number) => computeExpectedRatio(),
+    onSuccess: (data, generation) => {
+      if (generation === settingsGeneration.current)
+        setRatioValue(data.expected_size_ratio);
     },
   });
 
@@ -218,33 +238,38 @@ export default function App() {
   const deepConcurrency = concurrency?.deep_scan ?? 1;
   const thumbnailConcurrency = concurrency?.thumbnails ?? 4;
 
-  useEffect(() => {
-    if (settingsOpen) {
-      setStitchConcurrencyValue(stitchConcurrency);
-      setScanConcurrencyValue(scanConcurrency);
-      setDeepScanConcurrencyValue(deepConcurrency);
-      setRatioValue(expectedRatio);
-      setOutputSizeValue(stitchSettings?.output_size ?? "");
-      setBitrateValue(stitchSettings?.bitrate ?? "");
-      setStitchTypeValue(stitchSettings?.stitch_type ?? "");
-      setAutoResolution(stitchSettings?.auto_resolution ?? false);
-      setThumbnailConcurrencyValue(thumbnailConcurrency);
-      setOriginalBitrate(stitchSettings?.original_bitrate ?? false);
-    }
-  }, [
-    settingsOpen,
-    stitchConcurrency,
-    scanConcurrency,
-    deepConcurrency,
-    thumbnailConcurrency,
-    expectedRatio,
-    stitchSettings,
-  ]);
+  function closeSettings() {
+    settingsGeneration.current += 1;
+    setSettingsOpen(false);
+  }
+  function openSettings() {
+    settingsGeneration.current += 1;
+    settingsMutation.reset();
+    computeRatioMutation.reset();
+    setStitchConcurrencyValue(stitchConcurrency);
+    setScanConcurrencyValue(scanConcurrency);
+    setDeepScanConcurrencyValue(deepConcurrency);
+    setRatioValue(expectedRatio);
+    setOutputSizeValue(stitchSettings?.output_size ?? "");
+    setBitrateValue(stitchSettings?.bitrate ?? "");
+    setStitchTypeValue(stitchSettings?.stitch_type ?? "");
+    setAutoResolution(stitchSettings?.auto_resolution ?? false);
+    setThumbnailConcurrencyValue(thumbnailConcurrency);
+    setOriginalBitrate(stitchSettings?.original_bitrate ?? false);
+    setSettingsOpen(true);
+  }
   const lastUpdated = statusQuery.dataUpdatedAt
     ? new Date(statusQuery.dataUpdatedAt).toLocaleTimeString("en-US")
     : "—";
-  const controlsLocked = mutation.isPending || !!activeTask || loginOpen;
   const activeTasks = statusQuery.data?.active_tasks ?? [];
+  const controlsLocked =
+    mutation.isPending ||
+    !!activeTask ||
+    activeTasks.length > 0 ||
+    loginOpen ||
+    stitchSelectedMutation.isPending ||
+    regenerateMutation.isPending ||
+    thumbnailsSelectedMutation.isPending;
   const showTaskControl = mutation.isPending || !!activeTask;
 
   useEffect(() => {
@@ -341,7 +366,7 @@ export default function App() {
       {detailsJob && (
         <BridgeJobDetails
           job={detailsJob}
-          onClose={() => setDetailsJob(null)}
+          onClose={() => setDetailsJobId(null)}
         />
       )}
       <section className="panel actions">
@@ -386,7 +411,7 @@ export default function App() {
             <button
               className="ghost"
               type="button"
-              onClick={() => setSettingsOpen(true)}
+              onClick={openSettings}
               disabled={controlsLocked}
             >
               Settings
@@ -496,7 +521,7 @@ export default function App() {
         )}
       </div>
       <JobTable
-        onDetails={setDetailsJob}
+        onDetails={(job) => setDetailsJobId(job.id)}
         jobs={jobs}
         isLoading={statusQuery.isLoading}
         selectedJobs={selectedJobs}
@@ -560,12 +585,9 @@ export default function App() {
               type="number"
               min={1}
               value={stitchConcurrencyValue}
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                setStitchConcurrencyValue(
-                  Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)),
-                );
-              }}
+              onChange={(event) =>
+                setStitchConcurrencyValue(event.target.value)
+              }
               disabled={settingsMutation.isPending}
             />
             <label htmlFor="scan-concurrency-input">Scan jobs</label>
@@ -574,12 +596,7 @@ export default function App() {
               type="number"
               min={1}
               value={scanConcurrencyValue}
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                setScanConcurrencyValue(
-                  Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)),
-                );
-              }}
+              onChange={(event) => setScanConcurrencyValue(event.target.value)}
               disabled={settingsMutation.isPending}
             />
             <label htmlFor="deep-scan-concurrency-input">Deep scan jobs</label>
@@ -588,12 +605,9 @@ export default function App() {
               type="number"
               min={1}
               value={deepScanConcurrencyValue}
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                setDeepScanConcurrencyValue(
-                  Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)),
-                );
-              }}
+              onChange={(event) =>
+                setDeepScanConcurrencyValue(event.target.value)
+              }
               disabled={settingsMutation.isPending}
             />
             <label htmlFor="thumbnail-concurrency-input">Thumbnail jobs</label>
@@ -602,12 +616,9 @@ export default function App() {
               type="number"
               min={1}
               value={thumbnailConcurrencyValue}
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                setThumbnailConcurrencyValue(
-                  Number.isNaN(next) ? 1 : Math.max(1, Math.round(next)),
-                );
-              }}
+              onChange={(event) =>
+                setThumbnailConcurrencyValue(event.target.value)
+              }
               disabled={settingsMutation.isPending}
             />
             <label htmlFor="ratio-input">Expected size ratio</label>
@@ -618,10 +629,7 @@ export default function App() {
                 min={0.01}
                 step={0.01}
                 value={ratioValue}
-                onChange={(event) => {
-                  const next = Number(event.target.value);
-                  setRatioValue(Number.isNaN(next) ? 1 : Math.max(0.01, next));
-                }}
+                onChange={(event) => setRatioValue(event.target.value)}
                 disabled={
                   settingsMutation.isPending || computeRatioMutation.isPending
                 }
@@ -629,7 +637,9 @@ export default function App() {
               <button
                 type="button"
                 className="ghost"
-                onClick={() => computeRatioMutation.mutate()}
+                onClick={() =>
+                  computeRatioMutation.mutate(settingsGeneration.current)
+                }
                 disabled={
                   computeRatioMutation.isPending || settingsMutation.isPending
                 }
@@ -648,9 +658,6 @@ export default function App() {
                   onChange={(event) => {
                     const checked = event.target.checked;
                     setAutoResolution(checked);
-                    if (checked) {
-                      setOutputSizeValue("");
-                    }
                   }}
                   disabled={settingsMutation.isPending}
                 />
@@ -670,9 +677,7 @@ export default function App() {
                   : "e.g. 5760x2880"
               }
             />
-            <label htmlFor="bitrate-input">
-              Bitrate (leave blank to match input)
-            </label>
+            <label htmlFor="bitrate-input">Bitrate (bits per second)</label>
             <input
               id="bitrate-input"
               type="text"
@@ -689,9 +694,6 @@ export default function App() {
                   onChange={(event) => {
                     const checked = event.target.checked;
                     setOriginalBitrate(checked);
-                    if (checked) {
-                      setBitrateValue("");
-                    }
                   }}
                   disabled={settingsMutation.isPending}
                 />
@@ -710,7 +712,7 @@ export default function App() {
               <button
                 type="button"
                 className="ghost"
-                onClick={() => setSettingsOpen(false)}
+                onClick={closeSettings}
                 disabled={settingsMutation.isPending}
               >
                 Cancel

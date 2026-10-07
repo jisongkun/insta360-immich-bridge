@@ -74,6 +74,7 @@ export type TaskAction =
   | "test_connection";
 
 export interface BridgeSettings {
+  api_key_configured?: boolean;
   immich_url: string;
   api_key_env: string;
   api_key_file: string;

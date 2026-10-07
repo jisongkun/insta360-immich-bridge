@@ -2,12 +2,16 @@
 
 import fcntl
 import logging
+import json
+import math
 import os
 import sqlite3
 import threading
+import tempfile
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, CancelledError
+from .cancellation import check_cancel
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -89,17 +93,94 @@ class Service:
         return client, target
 
     def configure(self, updates):
+        updates = dict(updates)
+        key = updates.pop("immich_api_key", "")
+        ratio = updates.pop("expected_size_ratio", None)
+        if (
+            not isinstance(key, str)
+            or len(key) > 4096
+            or any(c.isspace() for c in key.strip())
+        ):
+            raise ValueError("API key must be a single non-whitespace value")
+        key = key.strip()
+        if ratio is not None and (
+            isinstance(ratio, bool)
+            or not isinstance(ratio, (int, float))
+            or not math.isfinite(ratio)
+            or ratio <= 0
+        ):
+            raise ValueError("Invalid estimated size ratio")
         with self.guard:
             if {"state_dir", "work_dir"} & set(updates):
                 raise ValueError(
                     "State/work directories require restart and config-file editing"
                 )
+            if "profile" in updates and isinstance(updates["profile"], dict):
+                profile = {**self.config.data["profile"], **updates["profile"]}
+                for flag, value in (
+                    ("auto_resolution", "output_size"),
+                    ("original_bitrate", "bitrate"),
+                ):
+                    if profile[flag] and not profile[value]:
+                        profile[value] = self.config.data["profile"][value]
+                updates["profile"] = profile
             config = self.config.changed(updates)
-            config.save()
+            changed_connection = bool(key) or any(
+                config.data[k] != self.config.data[k]
+                for k in ("immich_url", "api_key_env", "api_key_file")
+            )
+            if changed_connection and self.active_tasks:
+                raise ValueError(
+                    "Stop running tasks before changing the Immich connection"
+                )
+            secret_path = None
+            saved = False
+            try:
+                if key:
+                    if not config.path:
+                        raise ValueError(
+                            "A persistent config path is required to save the API key"
+                        )
+                    root = config.path.parent / "credentials"
+                    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    if root.is_symlink():
+                        raise ValueError("Credential directory cannot be a symlink")
+                    root.chmod(0o700)
+                    fd, name = tempfile.mkstemp(
+                        prefix="immich-", suffix=".key", dir=root
+                    )
+                    secret_path = Path(name)
+                    with os.fdopen(fd, "w") as handle:
+                        handle.write(key)
+                    config = config.changed({"api_key_file": str(secret_path)})
+                # Validate the whole request before changing either persisted settings store.
+                with self.store.connection() as c:
+                    c.execute("BEGIN IMMEDIATE")
+                    changes = {}
+                    if ratio is not None:
+                        changes["expected_ratio"] = ratio
+                    if changed_connection:
+                        changes.update(connection={}, target=None, api_paused=False)
+                    for name, value in changes.items():
+                        c.execute(
+                            "INSERT INTO kv VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                            (name, json.dumps(value)),
+                        )
+                    config.save()
+                    saved = True
+            except Exception:
+                if saved:
+                    self.config.save()
+                if secret_path:
+                    secret_path.unlink(missing_ok=True)
+                raise
             self.config = config
+            if changed_connection:
+                self.connection = {}
         return config.public()
 
-    def scan(self, full=False, folders=True, api=True):
+    def scan(self, full=False, folders=True, api=True, cancel=None):
+        check_cancel(cancel)
         config = self.config
         groups = []
         now = time.time()
@@ -111,7 +192,7 @@ class Service:
             self.store.set("last_full_attempt", now)
         if api and config.data["api_source_enabled"] and config.data["immich_url"]:
             client, target = self.connect()
-            groups += discover_immich(client, config, self.store, full)
+            groups += discover_immich(client, config, self.store, full, cancel=cancel)
             self.store.set("last_api_scan", time.time())
             if full:
                 self.store.set("last_full_scan", time.time())
@@ -124,14 +205,20 @@ class Service:
                 else config,
                 self.store,
                 time.time(),
+                cancel=cancel,
             )
             self.store.set("last_folder_scan", time.time())
         target = self.store.get("target")
+        if groups and not (
+            api and config.data["api_source_enabled"] and config.data["immich_url"]
+        ):
+            _, target = self.connect()
         # Folder discovery can run without credentials, but do not scope receipts to an unknown account.
         if groups and not target:
             raise ValueError("Test Immich connection before queueing source groups")
         recipe = config.recipe()
         for group in groups:
+            check_cancel(cancel)
             self.store.enqueue(group, recipe, target)
         self.store.set(
             "scan_summary", {"groups": len(groups), "at": time.time(), "full": full}
@@ -141,14 +228,16 @@ class Service:
             f"{len(groups)} stable source groups; completed receipts retained",
         )
         if full:
-            self.reconcile()
+            self.reconcile(cancel)
 
-    def reconcile(self):
+    def reconcile(self, cancel=None):
+        check_cancel(cancel)
         if not self.config.data["immich_url"]:
             return
         client, target = self.connect()
 
         def check(job):
+            check_cancel(cancel)
             if (
                 job["stage"] == "done"
                 and job["target"] == target
@@ -250,13 +339,15 @@ class Service:
         with ThreadPoolExecutor(max_workers=config.data["stitch_parallelism"]) as pool:
             list(pool.map(work, eligible))
 
-    def thumbnails(self, ids=None):
+    def thumbnails(self, ids=None, cancel=None):
         legacy = load()
         root = Path(self.config.data["state_dir"]) / "thumbnails"
         root.mkdir(exist_ok=True)
         jobs = [self.store.job(id) for id in ids] if ids else self.store.jobs()
 
         def make(job):
+            if cancel and cancel.is_set():
+                return
             files = job["group"]["files"]
             if not files:
                 return
@@ -307,7 +398,11 @@ class Service:
         with self.guard:
             for id, t in self.active_tasks.items():
                 if t["key"] == key:
-                    return id
+                    if t["action"] == action and t.get("request_ids") == tuple(
+                        ids or []
+                    ):
+                        return id
+                    raise ValueError("Another task is running; retry after it finishes")
             if action == "full_run" and any(
                 t["key"] == "scan" for t in self.active_tasks.values()
             ):
@@ -317,11 +412,10 @@ class Service:
             if key == "scan" and any(
                 t["action"] == "full_run" for t in self.active_tasks.values()
             ):
-                return next(
-                    id
-                    for id, t in self.active_tasks.items()
-                    if t["action"] == "full_run"
+                raise ValueError(
+                    "A full run is already running; retry discovery after it finishes"
                 )
+            request_ids = tuple(ids or [])
             if action == "regenerate_selected":
                 ids = self.regenerate(ids)
             id = str(uuid.uuid4())
@@ -331,6 +425,7 @@ class Service:
                 "id": id,
                 "action": action,
                 "key": key,
+                "request_ids": request_ids,
                 "started_at": datetime.now(timezone.utc).isoformat(),
             }
 
@@ -340,11 +435,11 @@ class Service:
                         self.connect()
                         self.event("connection", "Connection verified")
                     elif action in ("scan", "deep_scan", "full_run"):
-                        self.scan(full=action == "deep_scan")
+                        self.scan(full=action == "deep_scan", cancel=cancel)
                         if action == "full_run" and not cancel.is_set():
                             self.run_jobs(cancel=cancel)
                     elif action == "generate_thumbnails":
-                        self.thumbnails(ids)
+                        self.thumbnails(ids, cancel=cancel)
                     else:
                         self.run_jobs(
                             ids,
@@ -356,6 +451,8 @@ class Service:
                             ),
                             cancel=cancel,
                         )
+                except CancelledError:
+                    self.event("task_cancelled", "Operation stopped at a safe boundary")
                 except Exception as error:
                     self.connection = {
                         "ok": False,
@@ -425,7 +522,7 @@ class Service:
                 since = time.time()
                 try:
                     if full or api or folder:
-                        self.scan(full, folders=folder, api=api or full)
+                        self.scan(full, folders=folder, api=api or full, cancel=cancel)
                     if not cancel.is_set():
                         self.run_jobs(cancel=cancel, automatic=True)
                         if retries:
@@ -444,6 +541,11 @@ class Service:
                         if j["stage"] == "failed" and j["updated"] >= since
                     ):
                         self.store.set("api_paused", True)
+                except CancelledError:
+                    self.event(
+                        "task_cancelled",
+                        "Automatic operation stopped at a safe boundary",
+                    )
                 except Exception as error:
                     if isinstance(error, ImmichError) and error.status in (401, 403):
                         self.store.set("api_paused", True)
@@ -618,7 +720,11 @@ class Service:
             )
         with self.guard:
             tasks = [
-                {k: v for k, v in t.items() if k not in ("thread", "key")}
+                {
+                    k: v
+                    for k, v in t.items()
+                    if k not in ("thread", "key", "request_ids")
+                }
                 for t in self.active_tasks.values()
             ]
         return dict(

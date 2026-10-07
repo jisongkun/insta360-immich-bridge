@@ -94,3 +94,13 @@ The Ubuntu 22.04 diagnostic image and copied private SDK live outside Git. No NA
 - All four Immich core containers remained healthy. Runtime state/config were snapshotted separately from Git; recovery references and image identities belong in SJOPSWiki.
 
 End-to-end acceptance is still blocked at native SDK conversion. Upload/server-original hash verification, local cleanup, completed/restart deduplication, replacement and panorama playback cannot be claimed from this failed run or the simulated tests.
+
+## Setup/control usability repair — 2026-10-07
+
+Review scope and reproduced defects are recorded in `docs/UI_REVIEW.md`. Superpowers debugging, regression-first changes and a separate read-only follow-up review were used; the final reviewed patch had no remaining verified Important issue in this scope.
+
+- Full backend: **61 passed in 18.42s**. Fifteen new setup/control regressions cover private key storage/readback, blank-key preservation, invalid/form-wide Save, persistence failure, draft-only ratio calculation, target invalidation/reverification, busy selected work, unreadable secrets and discovery/thumbnail cancellation.
+- Frontend: clean `npm ci`, **10 React tests passed**, TypeScript and Vite production build passed. API responses are the external test seam; actual App/BridgePanel/query cache are exercised. Verified red/green for polling overwrite, partial Save, cancelled/reopened ratio callback, numeric clearing and slow-status Save/reopen. Final assets: `index-CDq7Oc6c.js`, `index-CnEwtNUs.css`.
+- Python ruff F, original-worker AST syntax and `git diff --check` passed. The original conversion worker is unchanged.
+- Local Chrome with isolated Flask/SQLite fixture: Cancel clears entered dummy key and URL edits; interval 120 survives Save/reload; resolution 3840x1920 and ratio 3 survive immediate Save/reopen. Fixture receipts are synthetic UI evidence, not media or upload acceptance. Real credentials were not entered into the fixture.
+- Native SDK GPU export/upload acceptance remains blocked as described above. These repairs do not establish successful real export, delivery, deletion or replacement. fnOS deployment continues with automatic processing off and the requested fixed H.265 recipe.

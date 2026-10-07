@@ -31,7 +31,12 @@ export function BridgeJobDetails({
   });
   return (
     <div className="modal-backdrop">
-      <div className="modal job-details">
+      <div
+        className="modal job-details"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Job details"
+      >
         <div className="actions-header">
           <h3>Job {job.id}</h3>
           <button className="ghost" onClick={onClose}>
@@ -39,17 +44,14 @@ export function BridgeJobDetails({
           </button>
         </div>
         <p>
-          Current stage: {logs.data?.stage ?? job.stage} · Resume phase:{" "}
-          {logs.data?.phase ?? job.phase}
+          Current stage: {job.stage} · Resume phase: {job.phase}
         </p>
         <p>
           Immich asset: {job.asset_id ?? "not uploaded"} · Verification:{" "}
           {job.verified ? "passed" : "pending"} · Local export:{" "}
           {job.local_deleted ? "deleted" : "retained / not generated yet"}
         </p>
-        {(logs.data?.error || job.error) && (
-          <p className="error">{logs.data?.error || job.error}</p>
-        )}
+        {job.error && <p className="error">{job.error}</p>}
         <details>
           <summary>Sources, Target, and Effective Settings</summary>
           <pre>{JSON.stringify(details.data, null, 2)}</pre>

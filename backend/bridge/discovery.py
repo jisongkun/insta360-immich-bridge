@@ -6,6 +6,7 @@ import re
 import subprocess
 import shutil
 from concurrent.futures import ThreadPoolExecutor
+from .cancellation import check_cancel
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
@@ -23,12 +24,14 @@ def snapshot(path):
     return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
 
 
-def hashes(path):
+def hashes(path, cancel=None):
+    check_cancel(cancel)
     before = snapshot(path)
     sha = hashlib.sha256()
     sha1 = hashlib.sha1()
     with Path(path).open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            check_cancel(cancel)
             sha.update(chunk)
             sha1.update(chunk)
     if snapshot(path) != before:
@@ -58,7 +61,8 @@ def resolve_original(original_path, mappings):
     raise ValueError("Original path has no configured read-only mapping")
 
 
-def observe(path, name, scope, asset_id, config, store, now):
+def observe(path, name, scope, asset_id, config, store, now, cancel=None):
+    check_cancel(cancel)
     match = PATTERN.fullmatch(name)
     if not match or path.is_symlink() or not path.is_file():
         return None
@@ -73,7 +77,7 @@ def observe(path, name, scope, asset_id, config, store, now):
     digest = previous.get("sha256")
     sha1 = previous.get("sha1")
     if not digest:
-        digest, sha1 = hashes(path)
+        digest, sha1 = hashes(path, cancel)
         store.set(key, {**previous, "sha256": digest, "sha1": sha1})
     prefix, timestamp, role, segment, ext = match.groups()
     return {
@@ -153,13 +157,15 @@ def source_capture_time(file, config):
         return fallback, "filename"
 
 
-def group_files(files, config, store):
+def group_files(files, config, store, cancel=None):
     candidates = {}
     groups = {}
     for f in files:
+        check_cancel(cancel)
         key = (f["scope"], f["prefix"], f["timestamp"], f["segment"])
         candidates.setdefault(key, {}).setdefault(f["role"], []).append(f)
     for key, roles in candidates.items():
+        check_cancel(cancel)
         if "00" not in roles:
             store.event(
                 None, "waiting_pair", f"{key[2]} segment {key[3]} missing lens 00"
@@ -212,13 +218,15 @@ def group_files(files, config, store):
     return list(groups.values())
 
 
-def discover_folders(config, store, now):
+def discover_folders(config, store, now, cancel=None):
     candidates = []
     for folder in config.data["folders"]:
+        check_cancel(cancel)
         root = Path(folder)
         if root.is_symlink() or not root.is_dir():
             raise FileNotFoundError(f"Source mount is unavailable: {root}")
         for directory, dirs, names in os.walk(root, followlinks=False):
+            check_cancel(cancel)
             dirs[:] = [
                 d
                 for d in dirs
@@ -230,6 +238,7 @@ def discover_folders(config, store, now):
                 )
             ]
             for name in names:
+                check_cancel(cancel)
                 path = Path(directory, name)
                 if name.startswith(".") or any(
                     fnmatch.fnmatch(str(path), x) for x in config.data["exclusions"]
@@ -238,11 +247,14 @@ def discover_folders(config, store, now):
                 if PATTERN.fullmatch(name):
                     candidates.append((path, name, str(path.parent), None))
     with ThreadPoolExecutor(max_workers=config.data["scan_parallelism"]) as pool:
-        files = list(pool.map(lambda f: observe(*f, config, store, now), candidates))
-    return group_files([f for f in files if f], config, store)
+        files = list(
+            pool.map(lambda f: observe(*f, config, store, now, cancel), candidates)
+        )
+    return group_files([f for f in files if f], config, store, cancel)
 
 
-def discover_immich(client, config, store, full=False):
+def discover_immich(client, config, store, full=False, cancel=None):
+    check_cancel(cancel)
     target = store.get("target", client.base)
     watermark = store.get("watermark:" + target)
     # Probe first to obtain a server Date without trusting the execution machine's clock.
@@ -269,6 +281,7 @@ def discover_immich(client, config, store, full=False):
         cursor = None
         seen = set()
         while True:
+            check_cancel(cancel)
             page = client.search(filter, cursor)
             for asset in page["items"]:
                 index[asset["id"]] = asset
@@ -278,10 +291,12 @@ def discover_immich(client, config, store, full=False):
             if cursor in seen:
                 raise ValueError("Repeated Immich cursor")
             seen.add(cursor)
+    check_cancel(cancel)
     store.set("api-index:" + target, index)
     store.set("watermark:" + target, upper)
     files = []
     for asset in index.values():
+        check_cancel(cancel)
         name = asset.get("originalFileName", "")
         if not PATTERN.fullmatch(name):
             continue
@@ -294,27 +309,36 @@ def discover_immich(client, config, store, full=False):
             fingerprint = asset.get("checksum")
             if not path.exists() or store.get("download:" + asset["id"]) != fingerprint:
                 temp = path.with_suffix(".partial")
-                with temp.open("wb") as handle:
-                    client.download(asset["id"], handle)
-                # Immich internal asset checksums are SHA1 file hashes, base64 encoded.
-                if fingerprint and asset.get("checksumAlgorithm", "sha1") == "sha1":
-                    import base64
+                try:
+                    with temp.open("wb") as handle:
+                        client.download(asset["id"], handle, cancel=cancel)
+                    check_cancel(cancel)
+                except Exception:
+                    temp.unlink(missing_ok=True)
+                    raise
+                try:
+                    # Immich internal asset checksums are SHA1 file hashes, base64 encoded.
+                    if fingerprint and asset.get("checksumAlgorithm", "sha1") == "sha1":
+                        import base64
 
-                    _, sha1 = hashes(temp)
-                    if fingerprint not in (
-                        sha1,
-                        base64.b64encode(bytes.fromhex(sha1)).decode(),
-                    ):
-                        temp.unlink()
-                        raise ValueError("Downloaded source checksum differs")
-                temp.replace(path)
-                store.set("download:" + asset["id"], fingerprint)
+                        _, sha1 = hashes(temp, cancel)
+                        if fingerprint not in (
+                            sha1,
+                            base64.b64encode(bytes.fromhex(sha1)).decode(),
+                        ):
+                            raise ValueError("Downloaded source checksum differs")
+                    temp.replace(path)
+                    store.set("download:" + asset["id"], fingerprint)
+                finally:
+                    temp.unlink(missing_ok=True)
         else:
             path = resolve_original(asset["originalPath"], config.data["mappings"])
         if not path.is_file():
             store.event(None, "source_missing", name)
             continue
-        f = observe(path, name, "immich:" + target, asset["id"], config, store, upper)
+        f = observe(
+            path, name, "immich:" + target, asset["id"], config, store, upper, cancel
+        )
         if f:
             files.append(f)
-    return group_files(files, config, store)
+    return group_files(files, config, store, cancel)
