@@ -17,3 +17,13 @@ backend/test/stitched/VID_20251227_133347.log
 *.sqlite3
 *.db
 .DS_Store
+
+# Bridge development/runtime
+.venv/
+__pycache__/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+bridge-config.json
+bridge-state/
+bridge-work/
