@@ -1,207 +1,207 @@
-# Insta360–Immich 独立集成工具设计
+# Independent Insta360–Immich Integration Design
 
-日期：2026-10-07。状态：用户已审阅并要求开始开发；最新范围为复用原有文件转换实现，只开发桥接与必要兼容适配。桥接实施及本地验证已完成，具体证据和真实 GPU／Immich 验收边界见 `docs/VALIDATION.md`；尚未部署。
+Date: 2026-10-07. Status: reviewed by the user, who authorized implementation. The latest scope reuses the existing media conversion implementation and adds only bridging and necessary compatibility adaptations. Bridge implementation and local validation are complete; evidence and the remaining real GPU/Immich acceptance boundary are in `docs/VALIDATION.md`. No deployment has occurred.
 
-## 1. 产品定位与已确认要求
+## 1. Product Purpose and Confirmed Requirements
 
-本项目负责在 Insta360 MediaSDK 与 Immich 之间编排素材发现、拼接、媒体校验、入库、成片替换和恢复。拼接算法由 SDK 提供，媒体探测/解码使用 FFmpeg/ffprobe，持久化使用 SQLite；不自行实现这些通用能力。
+The project orchestrates media discovery, stitching, validation, import, export replacement, and recovery between Insta360 MediaSDK and Immich. The SDK supplies stitching algorithms; FFmpeg/ffprobe handle probing and decoding; SQLite supplies persistence. These general capabilities are reused.
 
-现有 autostitcher 的文件转换流程直接参考/复用：保留 SDK 调用、视频/照片处理、日期/360 元数据注入和缩略图实现；只做 SDK 3.1.5 和桥接调用所需的兼容性修正，不重写转换算法或另造转码框架。通过独立进程和任务工作目录调用现有转换器，旧控制器的扫描/调度/数据库不作为桥接业务状态的权威。
+The existing autostitcher's conversion flow is referenced and reused directly: SDK invocation, video/photo handling, date/360 metadata injection, and thumbnails remain. Changes are limited to compatibility fixes required by SDK 3.1.5 and bridge invocation. There is no new stitching algorithm or transcoding framework. A separate process and job workspace invoke the existing converter; the old controller's discovery, scheduling, and database are not the authority for bridge state.
 
-新代码围绕桥接职责组织。参考现有任务表、设置、缩略图、选中处理、失败重试和手动控制的交互，保留可以直接复用的 UI 能力。复用代码明确记录来源并遵守 GPL-3.0；当前仓库保留已有许可、归属和历史。本设计不改变 GitHub 仓库的实际 fork 身份，也不重写 Git 历史。
+New code is organized around bridging responsibilities. Existing job tables, settings, thumbnails, selected-job processing, retries, and manual controls inform the UI, preserving reusable capabilities. Reused code records its origin and follows GPL-3.0. Existing licenses, attribution, and history remain. This design does not change the GitHub repository's fork identity or rewrite Git history.
 
-用户已确认：
+The user confirmed:
 
-- 使用本机下载的 Linux MediaSDK 3.1.5。
-- 从 Immich API 发现 Insta360 原片；也可指定一个或多个文件夹，包含子目录。
-- 按可配置参数拼接为带球形元数据的 360 MP4。
-- 直接通过 API 上传到 Immich 内部图库，由 Immich 决定原片存储位置。
-- 核验入库后删除本工具的本地成片副本，保留原始 INSV/INSP。
-- 支持去重、重启恢复、日志、可选 interval 和手动触发。
-- 支持修改参数后重新导出并替换之前的 MP4。
+- Use the locally downloaded Linux MediaSDK 3.1.5.
+- Discover Insta360 originals through the Immich API or one or more folders, including subfolders.
+- Stitch with configurable parameters into 360 MP4 files containing spherical metadata.
+- Upload directly through the API to Immich's internal library, letting Immich control storage paths.
+- Delete the bridge's local export after verifying import; retain original INSV/INSP files.
+- Support deduplication, restart recovery, logs, optional intervals, and manual triggers.
+- Allow changed settings to regenerate and replace previous MP4 exports.
 
-视频是主要验收对象。原有照片拼接能力保留为独立 INSP/JPG 处理路径，默认自动任务只启用视频；照片模式需独立样本验收。缩略图、排序、分页、多选、并发设置、批量重试等已有实用能力在新界面中保留。旧文件大小比例可作为容量估算参考，不能作为成功判定或冒充真实进度。
+Video is the primary acceptance target. Existing photo stitching remains as a separate INSP/JPG path. Automatic jobs default to video only; photo mode requires separate sample acceptance. Thumbnails, sorting, pagination, multiselect, concurrency settings, and batch retries remain. The old file-size ratio may estimate storage capacity; it must not determine success or impersonate real progress.
 
-## 2. 范围与边界
+## 2. Scope and Boundaries
 
-本轮设计面向单实例服务、一个配置的 Immich 目标账号，以及多个来源。数据库记录目标服务器/账号身份，禁止切换目标后把旧账号记录当作新账号的入库凭据。
+The design targets a single service instance, one configured Immich destination account, and multiple sources. The database records target server/account identity. Switching targets must not reuse another account's delivery receipts.
 
-源素材只读。不得修改、移动或删除原始 INSV/INSP、相机伴随文件；不得直接写 Immich 数据库或管理目录。允许的远端替换仅通过官方 API 处理本工具可以证明由自己生成并管理的旧导出资产。正常上传发现重复的既有资产不自动获得替换/删除资格。
+Sources are read-only. Never modify, move, or delete original INSV/INSP or camera companion files, and never write directly to Immich's database or managed directories. Remote replacement uses official APIs only for previous exports whose bridge ownership can be proven. An existing duplicate discovered during ordinary upload does not automatically grant replacement/deletion rights.
 
-用户所说的 output 到 Immich library，落实为 API 入库，不直接写 `/data/library`。不借用其他软件的密钥；运行时配置专用 Key 引用，值不进入 Git、网页响应或日志。
+Output to the Immich library means API import, not direct writes to `/data/library`. Use a dedicated runtime key reference rather than borrowing another application's key; values must stay out of Git, web responses, and logs.
 
-本地 Mac 用于开发和 SDK 包检查。实际 SDK/GPU 运行需要 Linux AMD64；目标设备能力须实测，不由参数存在推断。安装、NAS 部署、真实媒体转换与验收属于后续操作；推送源码不授权部署。
+The local Mac is for development and SDK package inspection. Actual SDK/GPU execution requires Linux AMD64. Target capabilities require measurements rather than inference from option names. Installation, NAS deployment, real media conversion, and acceptance are later operations. Source pushes do not authorize deployment.
 
-## 3. 架构
+## 3. Architecture
 
-保留 Python 后端、React/TypeScript 前端和 SQLite 的技术基础，独立拆分以下职责：
+Retain Python, React/TypeScript, and SQLite, separating these responsibilities:
 
-| 模块 | 责任 |
+| Module | Responsibility |
 | --- | --- |
-| 来源适配器 | Immich 增量查询、目录递归发现、原片路径解析或下载 |
-| 素材识别/配对 | 素材信息、镜头角色、分段、完整性与稳定性 |
-| 任务与调度 | 持久化任务、配置快照、定时/手动触发、租约与恢复 |
-| 转换器网关 | 隔离调用现有转换器，SDK 3.1.5 必要适配、能力预检、子进程与日志 |
-| 媒体验证 | 可解码性、尺寸、时长、音频、日期、360 元数据 |
-| Immich 客户端 | 上传、查重、资产读回、原片下载校验、关联迁移与软删除 |
-| 日志与控制接口 | 任务事件、SDK 日志、配置、状态与网页交互 |
+| Source adapters | Incremental Immich queries, recursive folder discovery, original-path resolution or downloads |
+| Media recognition/pairing | Media information, lens roles, segments, completeness, and stability |
+| Jobs and scheduling | Durable jobs, settings snapshots, scheduled/manual triggers, leases, and recovery |
+| Converter gateway | Isolated existing-converter invocation, SDK 3.1.5 adaptations, capability preflight, subprocesses, and logs |
+| Media validation | Decodability, dimensions, duration, audio, dates, and 360 metadata |
+| Immich client | Upload, duplicate checks, asset readback, original-download verification, association migration, and soft deletion |
+| Logs and control API | Job events, SDK logs, configuration, status, and web interaction |
 
-一个进程拥有桥接调度权。防止多个实例同时领取任务；转换与交付分别领取持久化任务。原有转换 worker 仅在隔离调用进程中执行一个指定任务，不运行旧扫描器/REST 服务。依赖固定版本，不在构建时从未固定的 GitHub 分支安装代码；360 元数据写入沿用现有模块并固定来源/版本。
+One process owns bridge scheduling. Prevent multiple instances from claiming the same jobs. Conversion and delivery claim durable work. The existing worker executes one explicit job in an isolated process without its legacy scanner or REST service. Pin dependencies; do not install code from an unpinned GitHub branch during builds. Retain and pin the existing 360 metadata module.
 
-## 4. 素材发现
+## 4. Media Discovery
 
-### 4.1 Immich API 来源
+### 4.1 Immich API Source
 
-首次使用 `POST /api/search/metadata` 查询全部相关原片并建立索引。识别以原始文件名/扩展名和素材信息为依据，不要求 Immich 必须提取出相机品牌，也不只按拍摄日期过滤。覆盖扩展名大小写，排除回收站和离线不可用资产。
+Initially, query all relevant originals through `POST /api/search/metadata` and build an index. Recognition uses original filenames/extensions and media information. Do not require extracted camera branding or filter exclusively by capture date. Support extension case variations and exclude trashed/offline assets.
 
-日常使用创建/更新时间增量查询，创建时间指服务器资产记录的时间，不能使用拍摄时间。使用 structured filter 与 cursor 分页；分页 cursor 只属于当次查询，不当作长期变化流检查点。
+Regular queries use creation/update times incrementally. Creation time means the server asset-record time, not capture time. Use structured filters and cursor pagination. A pagination cursor belongs to one query, not a durable change-stream checkpoint.
 
-每轮固定查询上界，并使用时间重叠窗口；持久化 asset ID 去重。完整读完、保存本轮结果后才推进时间水位，失败保留旧水位。时间以服务器参考时间为准，考虑时钟偏差。新资产、异步元数据更新、已知待配对素材都需要进入匹配检查。
+Fix an upper bound per scan and use a time-overlap window. Persist asset IDs for deduplication. Advance the watermark only after reading and storing all results; failures retain the old watermark. Use a server reference clock to account for clock skew. Include new assets, asynchronous metadata updates, and known unpaired sources in matching checks.
 
-首次全量、日常增量和定期全量核对独立。全量核对默认每天一次，可关闭或手动触发；解决时间窗口外变化和缺失。未完整成功的分页结果不能作为资产消失的证据。时间窗口不能提供变化流的严格无遗漏保证，因此保留全量核对。
+Initial full discovery, routine incremental discovery, and periodic full reconciliation are independent. Full reconciliation defaults to daily and may be disabled or triggered manually; it addresses changes and missing assets outside time windows. Incomplete pagination cannot establish that an asset disappeared. Time windows do not provide strict change-stream completeness, so full reconciliation remains necessary.
 
-原片访问明确选择：
+Explicitly choose original access:
 
-1. **只读挂载**：按配置将 Immich `originalPath` 的目录前缀映射到本工具容器的路径；采用最长前缀匹配，拒绝映射范围外的路径及逃逸。路径是 API 返回的当前位置，不硬编码 Storage Template 日期结构。
-2. **API 下载**：无法本地访问时下载到本工具临时缓存；验证服务器提供的内容指纹和下载完整性。API 失败不猜路径，不自动切换到另一个未配置来源。
+1. **Read-only mounts:** map Immich `originalPath` prefixes to bridge container paths. Use the longest matching prefix; reject paths outside mappings and path escapes. Use the current path returned by the API, not hardcoded Storage Template dates.
+2. **API downloads:** when local access is unavailable, download into the bridge's temporary cache and verify server content fingerprints/completeness. On API failure, do not guess paths or silently switch to an unconfigured source.
 
-API 只发现该 Key 可访问且已被 Immich 收录的素材。尚未入库的文件由目录模式发现。
+The API finds only imported media accessible to the key. Folder mode discovers files that have not been imported.
 
-`/api/sync/stream` 不作为本轮依赖：核对的 v3.2.4 源码要求登录 session，明确拒绝 API Key。使用 API Key 的 metadata search 可以完成上述方案，不需要账号密码或浏览器会话。
+`/api/sync/stream` is not a dependency: the inspected v3.2.4 source requires a login session and explicitly rejects API keys. Key-authenticated metadata search supports this design without account passwords or browser sessions.
 
-### 4.2 目录来源
+### 4.2 Folder Sources
 
-支持多个只读根目录、递归开关和排除规则。跳过隐藏路径、符号链接及自身工作目录。源目录不存在或没有挂载时明确报告错误，不自动创建，避免误扫空目录。
+Support multiple read-only roots, recursive selection, and exclusion rules. Skip hidden paths, symlinks, and the bridge's own workspace. Report absent/unmounted roots rather than creating directories and silently scanning an empty location.
 
-新文件至少经过两个观察点，大小与 mtime/ctime 稳定且超过稳定窗口后进入识别。稳定窗口默认 60 秒；转换前后验证 stat/内容身份，发生变化则不发布。严格提交建议使用隐藏 `.copying` 目录，完成复制后改名；稳定时间本身不能证明任意暂停的复制已经结束。
+Observe new files at least twice. Recognition starts after size and mtime/ctime remain unchanged beyond the stability window, defaulting to 60 seconds. Verify stat/content identity before and after conversion; do not publish changed sources. For strict copy submission, use a hidden `.copying` directory and rename after copying completes. A stability timeout alone cannot prove that an arbitrarily paused copy has finished.
 
-### 4.3 配对与身份
+### 4.3 Pairing and Identity
 
-目录模式优先同目录、拍摄标识、分段和镜头角色；Immich 模式结合原始文件名、素材信息和原始资产身份，兼容管理目录重命名以及镜头资产分开存放。不能仅凭同一秒或相邻目录配对。
+Folder mode prioritizes a shared directory, capture identifier, segment, and lens role. Immich mode combines original filenames, media information, and original-asset identity, accommodating renamed storage directories and separately stored lenses. Do not pair solely by the same second or adjacent directories.
 
-单文件多镜头视频和双文件视频独立识别；INSP 不以视频 stream 数量作为唯一判据。不支持或存在歧义的模式显示具体原因，等待用户指定，不猜测转换。
+Recognize single-file multi-lens and dual-file video independently. INSP recognition must not rely solely on video stream counts. Unsupported or ambiguous modes show a specific reason and wait for user input rather than guessing.
 
-源身份基于规范化镜头角色及各原片 SHA-256 内容指纹，包含分段语义；路径、asset ID、stat 作为来源位置/缓存信息单独保存。初次处理计算哈希，后续在无变化时复用，避免每次轮询读取全部视频字节。不同来源遇到相同原片时合并位置记录；内容变化形成新的源版本。
+Source identity uses normalized lens roles and each original's SHA-256 bytes, including segment semantics. Paths, asset IDs, and stat snapshots remain location/cache information. Hash initially and reuse unchanged-source hashes instead of reading all bytes on every poll. Identical sources across adapters share location records; changed content creates a new source version.
 
-## 5. 拼接配置与 SDK
+## 5. Stitching Settings and SDK
 
-每个任务保存所用配置的不可变快照，避免排队时设置变化导致结果不可追溯。配方指纹覆盖有效参数、SDK 版本、有关模型版本/摘要，以及投影/元数据处理版本；仅修改日志级别或 interval 不触发重新导出。
+Each job retains an immutable settings snapshot so changes made while it is queued do not undermine traceability. Recipe fingerprints cover effective parameters, SDK version, relevant model versions/hashes, and projection/metadata processing version. Log-level or interval changes do not trigger regeneration.
 
-支持分辨率、码率、H.264/H.265、拼接算法、FlowState、方向锁定、StitchFusion、配件校正；3.1.5 的 10-bit、降噪等高级能力按能力检查启用。方向锁定依赖 FlowState。缺失模型或实际功能降级必须显示，不能静默当作请求全部生效。
+Settings cover resolution, bitrate, H.264/H.265, stitching algorithm, FlowState, direction lock, StitchFusion, and accessory correction. Advanced 3.1.5 features such as 10-bit processing and denoising require capability checks. Direction lock depends on FlowState. Missing models or feature downgrades must be visible rather than silently reported as successful application of all requested settings.
 
-自动分辨率参考相机、投影与轨道信息，不简单把一个镜头轨道的宽高当作全景尺寸；未知素材要求固定参数。默认不将低分辨率素材上采样。实际选定输出分辨率进入任务快照，8K 等高负载设置需真实素材验证。
+Automatic resolution considers camera, projection, and track information. A single lens track's dimensions are not automatically panorama dimensions. Unknown media requires fixed parameters. Do not upsample low-resolution sources by default. Persist actual selected dimensions in the job snapshot. High-load modes such as 8K require real samples.
 
-用户下载包：`/Users/shinji/Downloads/Linux_CameraSDK-2.1.8_MediaSDK-3.1.5.zip`。SDK 安装位置按包 README 为 `/opt/MediaSDK-3.1.5-linux/`，程序 `bin/MediaSDKTest`；模型默认 `bin/models/`。适配器允许显式配置可执行文件和模型根目录。
+User archive: `/Users/shinji/Downloads/Linux_CameraSDK-2.1.8_MediaSDK-3.1.5.zip`. The package README specifies `/opt/MediaSDK-3.1.5-linux/`, executable `bin/MediaSDKTest`, and default models `bin/models/`. The adapter permits explicit executable and model-root configuration.
 
-GPU 启用时省略 `-disable_cuda`，禁用时才传该开关；新模型参数使用以 `/` 结尾的 `-model_root_dir`。不能沿用旧 `-disable_cuda false` 和旧 AI 模型参数。
+Omit `-disable_cuda` when GPU processing is enabled; include it only to disable CUDA. Use the new `-model_root_dir` with a trailing `/`. Do not reuse `-disable_cuda false` or obsolete AI-model arguments.
 
-SDK 子进程使用参数数组，不经 shell 拼接。记录 stdout/stderr 和 SDK 日志，解析可识别的进度；没有可靠百分比时只显示阶段和耗时。取消终止本工具启动的进程组，等待退出后处理自己的临时文件。取消后恢复必须重新确认素材和输出状态。
+Pass SDK arguments as an array, not a shell command. Capture stdout/stderr and native logs. Parse recognized progress where available; without a reliable percentage, show stage and elapsed time only. Cancellation terminates the process group started by the bridge, waits for exit, then handles its own temporary files. Recovery after cancellation reconfirms source/output state.
 
-包内示例的错误回调可能仍以 0 退出；成功判定同时检查运行错误、功能状态和媒体。日志级别为 INFO，SDK 日志级别独立设置；SDK `--log_file` 使用本工具已创建的受管日志路径。
+The packaged example's error callback can still exit with status 0. Success requires checks of execution errors, feature status, and actual media. Use INFO service logging with a separate SDK level. SDK `--log_file` points to a managed log path created by the bridge.
 
-## 6. 输出校验与入库
+## 6. Export Validation and Import
 
-转换到本工具工作目录的唯一临时路径，命名包含源身份、分段和尝试编号。任务间不共享文件，不覆盖已有未知文件；空间不足时暂停领取转换任务。
+Convert into unique temporary paths in the bridge workspace, with source identity, segment, and attempt information. Jobs do not share files or overwrite unknown outputs. Insufficient space stops conversion dispatch.
 
-360 元数据在上传前注入。视频至少验证：完整解码检查、所选尺寸及 2:1 投影、与源一致的时长/音频存在性和可解码性、拍摄日期、球形元数据可读取、源素材前后没有变化。视频时长误差初始上限为 `max(0.5 秒, 2 个源视频帧的时长)`；双文件来源须先验证镜头时长一致，有源音频时输出须保留音频且相对视频时长偏差不超过 0.5 秒。探测不出必要信息时要求处理，不绕过验证；实际 SDK 样本若证明需要调整，记录证据后修改规则。不以文件大小比例判成功。照片采用独立图像与全景元数据校验。
+Inject 360 metadata before upload. Video checks include complete decoding, selected dimensions and 2:1 projection, source-consistent duration/audio and decodability, capture date, readable spherical metadata, and unchanged original identity. The initial duration tolerance is `max(0.5 seconds, 2 source-video frames)`. Dual-file lens durations must agree; source audio must survive, with audio/video duration differences no greater than 0.5 seconds. Missing required probe information needs resolution, not a validation bypass. Record real SDK sample evidence before adjusting tolerances. File-size ratios do not prove success. Photos have separate image/panorama metadata checks.
 
-日期优先使用原片可用的拍摄元数据，文件名仅作为回退；回退时使用配置的拍摄时区，不能把容器当前时区或导出时间当作拍摄时间。
+Capture dates prioritize available original metadata. Filenames are a fallback using the configured capture time zone. Do not substitute container time zones or export times.
 
-上传前持久化成片 SHA-256 及 Immich 查重需要的 SHA-1。正常上传获得新 asset ID，或从查重结果得到已有资产。读回资产确认账号、未在回收站，流式下载服务器原片比较 SHA-256。上传请求超时不先重新拼接；用成片校验和核对是否已入库，再重试上传。
+Persist export SHA-256 and Immich's SHA-1 duplicate-check checksum before upload. Successful upload returns a new asset ID, or duplicate detection returns an existing one. Read back the asset to confirm account and non-trash state, then stream the server original and compare SHA-256. An upload timeout does not trigger stitching again: check by checksum first, then retry upload if needed.
 
-只有服务器原片验证通过并已保存入库确认记录后，才删除本工具本地成片及允许清理的下载缓存。清理只操作账本关联、位于受管工作目录且身份未变化的文件。清理前的持久化确认保证重启后本地文件缺失仍为已完成；删除中断只重试清理。
+Delete local exports and eligible source-download caches only after server-original verification and a durable receipt. Cleanup operates only on ledger-linked files inside managed workspaces whose identities still match. The committed receipt ensures that local absence after restart still means completion. Interrupted deletion resumes cleanup alone.
 
-服务器收到文件和网页可播放是不同阶段。元数据提取、缩略图和转码可能异步完成，界面分开显示；实际 360 视角播放作为真实媒体验收项。
+Server receipt and web playability are separate stages. Metadata extraction, thumbnails, and transcoding can finish asynchronously and should be represented separately. Actual 360-view playback belongs to real-media acceptance.
 
-## 7. 参数变化与旧成片替换
+## 7. Settings Changes and Previous Export Replacement
 
-源身份和配方相同且完成记录有效时跳过。配方改变时标记“可重新导出”，支持单选、多选和按来源批量应用；保存参数默认只影响新任务，不自动重做整库。可选自动处理过时配方，需要明确范围。显式强制同配方重做生成新的尝试/版本，不破坏已有完成记录。
+Skip a source when identity/recipe match and its completed receipt remains valid. Changed recipes are eligible for regeneration through single selection, multiselect, or source-based batch application. Saved defaults affect new jobs rather than automatically reprocessing the whole library. Optional automatic outdated-recipe processing requires an explicit scope. Forced regeneration with the same recipe creates another attempt/version without destroying existing receipts.
 
-v3.2.4 没有在核对的公开资产接口中提供保留 asset ID 的媒体替换。本轮采用新资产接替旧资产：
+The inspected v3.2.4 public API does not offer media replacement while preserving asset IDs. A new asset takes over:
 
-1. 保留旧版，生成并验证新成片。
-2. 上传并下载核验新资产；持久化新旧 asset ID、参数与内容指纹。
-3. 迁移配置支持且有权限的关联信息，验证结果。
-4. 再次确认旧资产是账本管理的旧导出、目标账号一致、当前内容未被外部变更。
-5. 将旧资产通过 API 移入回收站（不强制永久删除）。
-6. 完成版本切换和本地成片清理。
+1. Keep the old version while generating and validating a new export.
+2. Upload and download-verify the new asset; persist old/new IDs, settings, and fingerprints.
+3. Migrate configured associations supported by available permissions and verify the result.
+4. Reconfirm the previous asset is a managed export for the same target account and its bytes have not changed externally.
+5. Move it to trash through the API without forced permanent deletion.
+6. Complete the version transition and local cleanup.
 
-当新旧 asset ID 相同时，说明有效输出字节相同，不删除该资产，只更新已核验的参数版本记录。新上传返回其他既有资产时，不将其当作本工具新创建资产，不擅自修改其关联信息；报告复用/冲突并保留旧版，必要时等待用户处理。
+Equal old/new IDs mean identical effective output bytes. Keep the asset and update the verified recipe-version record. A duplicate belonging to another existing asset does not establish bridge creation or authorize association mutation. Report reuse/conflict, retain the old version, and request user intervention if necessary.
 
-官方 `copy` 支持相册、收藏、共享链接、堆叠及 sidecar。本轮默认迁移相册与收藏，并明确选择共享/堆叠；sidecar 不盲目覆盖新成片，避免旧元数据覆盖新校验结果。说明、评分、标签等需分别核对对应接口后实现；不宣称完整保留人物识别、评论、编辑和所有引用。原资产 ID 和直接链接会变化。
+Official `copy` supports albums, favorites, shared links, stacks, and sidecars. Default migration includes albums/favorites; shared links/stacks are explicit choices. Do not blindly copy sidecars over newly validated metadata. Descriptions, ratings, and tags need separately verified interfaces. Do not claim preservation of every face association, comment, edit, or reference. Asset IDs and direct links change.
 
-新片生成、上传核验或关联迁移失败时保留旧版，不发起旧版清理。回收站请求响应丢失时先读回旧资产状态，确认是否已完成，不能误判并重新生成/上传；确实失败则只重试该阶段。替换不是 Immich 与本地 SQLite 间的单事务，允许短暂新旧并存，界面显示“替换未完成”。每个已确认阶段单独落账。
+Generation, upload verification, or association-copy failures retain the previous version and do not start old-asset cleanup. If a trash response is lost, read back the old asset before deciding whether it failed; avoid unnecessary regeneration/upload. A genuine failure resumes that phase only. Replacement is not a single transaction across Immich and SQLite, so temporary coexistence is acceptable and appears as an incomplete replacement. Commit every confirmed phase separately.
 
-服务使用专用 Key。基础操作需要资产读取、上传、下载，以及身份/服务器检查的对应权限；替换额外需要资产复制、删除和所选元数据更新权限。缺少替换权限不影响普通新片入库，界面说明未能完成的阶段。
+Use a dedicated key. Basic operations require asset read/upload/download and identity/server inspection permissions. Replacement additionally requires copy/delete and selected metadata-update permissions. Missing replacement permissions must not stop ordinary new exports; show the failed phase.
 
-## 8. 持久化模型与恢复
+## 8. Persistence and Recovery
 
-| 记录 | 主要内容 |
+| Record | Main Contents |
 | --- | --- |
-| 目标 | 服务器身份、账号 ID、配置版本与能力 |
-| 来源/位置 | 模式、根目录或 API 范围、asset ID、当前路径、stat、同步水位 |
-| 源组 | 镜头角色、分段、源内容指纹、配对/稳定状态 |
-| 配方 | 请求与有效配置、SDK/模型版本、规范化指纹 |
-| 转换 | 源组、配方快照、尝试、租约、进度、输出路径/哈希、验证报告 |
-| 交付/替换 | 新旧资产、创建/复用身份、确认结果、关联迁移与清理阶段 |
-| 事件 | 时间、任务、阶段、原因码、摘要、日志位置 |
+| Target | Server identity, account ID, configuration version, and capabilities |
+| Source/location | Adapter, root/API scope, asset ID, current path, stat snapshot, and synchronization watermark |
+| Source group | Lens roles, segment, content fingerprints, pairing/stability state |
+| Recipe | Requested/effective settings, SDK/model versions, normalized fingerprint |
+| Conversion | Source group, recipe snapshot, attempt, lease, progress, output path/hash, validation report |
+| Delivery/replacement | Old/new assets, creation/reuse identity, confirmations, association migration, cleanup phase |
+| Event | Timestamp, job, stage, reason code, summary, log location |
 
-转换状态：等待配对、等待稳定、待处理、运行中、校验中、成片就绪、失败、取消。
+Conversion states include waiting for a pair, waiting for stability, pending, running, validating, export ready, failed, and cancelled.
 
-交付状态：待上传、上传中、待核验、已核验、关联迁移中、旧版清理中、完成、待重试、需人工处理。成片本地缺失不能单独推导任务失败或需要重新拼接。
+Delivery states include pending upload, uploading, pending verification, verified, migrating associations, retiring the old version, complete, retry pending, and manual intervention. Local absence alone does not imply failure or a need to stitch again.
 
-启动时核对租约和本工具进程、临时文件、交付确认；逐阶段恢复。不得仅凭旧 PID 杀进程，避免 PID 重用。认证错误暂停目标交付；网络异常退避；无效配置/不支持素材显示可修复原因，不无限重试。远端成片后续被用户删除时标记远端缺失，默认不自动恢复用户删除的内容。
+On startup, reconcile leases, bridge-owned processes, temporary files, and receipts, then recover by phase. Do not kill a process solely by a saved PID, which may have been reused. Authentication failures pause target delivery; network failures use backoff. Invalid configurations and unsupported sources show correctable reasons rather than retrying forever. Mark externally deleted remote exports as missing; do not automatically recreate user-deleted content.
 
-原有 SQLite 是参考格式；新 schema 使用显式迁移版本。历史记录不能直接当作经核验的入库成功或资产所有权。保留原数据库并通过显式导入重新确认，不凭旧 `processed` 字段执行远端清理。
+The legacy SQLite database is a reference format. The new schema uses explicit migration versions. Historical `processed` records do not prove verified delivery or ownership. Preserve the original database and use explicit import/reconfirmation; never perform remote cleanup solely from its status field.
 
-## 9. 调度和网页
+## 9. Scheduling and Web UI
 
-自动模式可关闭，interval 可编辑；初始自动关闭，配置并验证来源/目标后由用户开启。建议 Immich 增量 interval 为 60 秒，文件夹扫描为 600 秒；并发初始转换 1，上传 1。一次扫描未完成时不再启动同来源扫描，手动和定时共用去重及领取规则。
+Automatic mode can be disabled and intervals edited. It starts off and is enabled by the user after sources/target are configured and verified. Recommended intervals are 60 seconds for incremental API checks and 600 seconds for folder scans, initially with one conversion and one upload. Do not start another scan of a source while its previous scan is running. Manual and scheduled work share deduplication/claim rules.
 
-手动操作包括检查新增素材、目录扫描、全量 API 核对、拼接选中/待处理、重试失败、重试交付、重新导出并替换、生成缩略图、取消任务。手动完整流程可发现后自动排队，但与“仅检查”明确区分。开启自动模式后的新增素材可自动进入处理队列。
+Manual actions include new-source checks, folder scans, full API reconciliation, selected/pending stitching, failed-job retries, delivery retries, regeneration/replacement, thumbnail generation, and cancellation. A full manual run may queue work after discovery but is distinct from discovery alone. New media may enter processing automatically once automatic mode is enabled.
 
-设置页显示来源、Immich 连接/账号/能力、只读路径映射或下载模式、SDK 能力、拼接配方、调度和日志。任务页保留分页/排序/多选/缩略图，新增来源、阶段、参数版本、跳过/失败原因、耗时、入库链接与替换状态。
+Settings show sources, Immich connection/account/capabilities, read-only mappings or download mode, SDK capabilities, recipes, scheduling, and logs. Jobs retain pagination, sorting, multiselect, and thumbnails, adding source, stage, recipe version, skip/failure reason, elapsed time, import link, and replacement state.
 
-界面显示上次/下次检查及扫描摘要；“没有新增”与“来源不可访问”明确区分。日志详情按任务实时追加，可暂停滚动、筛选级别并下载；重连按事件序号补读。普通状态更新使用现有查询模式，实时日志可用有认证的流或增量拉取，不另设未经认证的日志入口。
+Show last/next checks and scan summaries. Distinguish no new sources from inaccessible sources. Job logs append in real time, support pause, level filtering, and downloads, and resume by sequence number after reconnecting. Ordinary state retains existing query polling. Real-time logs can use authenticated streams or incremental requests, without an unauthenticated log endpoint.
 
-## 10. 日志、存储与运行依赖
+## 10. Logging, Storage, and Runtime Dependencies
 
-服务日志写 stdout 及可轮转文件；任务事件写 SQLite；SDK 每次尝试独立文件。每条事件包含时间、任务/尝试、阶段、原因码和摘要。token、Authorization、敏感配置与下载/上传认证信息脱敏；路径和媒体信息只向已认证界面提供。
+Write service logs to stdout and rotating files, events to SQLite, and SDK logs to separate attempt files. Events contain time, job/attempt, stage, reason code, and summary. Redact tokens, Authorization, sensitive configuration, and transfer credentials. Paths/media details are available only through authenticated views.
 
-保留策略可配置：服务与成功任务日志建议 14 天，失败任务日志建议 30 天，并设置容量上限。源/配方/入库账本不随日志轮转清除，否则会丢失去重和替换依据。满盘和不可写日志要报告，不能无声继续失去恢复证据。
+Retention is configurable: recommend 14 days for service/successful-job logs and 30 days for failures, with capacity limits. Source/recipe/receipt ledgers survive log rotation to preserve deduplication and replacement evidence. Full disks and unwritable logs must be reported rather than silently losing recovery records.
 
-SQLite、日志和缩略图使用独立持久化状态卷；媒体工作目录独立容量受限。SDK deb、模型、密钥、真实媒体和运行数据库保持 Git 外。发布构建只使用明确固定的依赖，SDK 包由用户自行提供并记录版本/摘要。SDK/模型变更需重新运行能力及短片测试。
+SQLite, logs, and thumbnails use a persistent state volume; media workspaces use separate capacity. SDK packages/models, secrets, real media, and runtime databases stay out of Git. Builds use pinned dependencies. Users supply SDK packages with recorded versions/hashes. SDK/model changes require capability and short-sample retesting.
 
-## 11. 验证与验收
+## 11. Validation and Acceptance
 
-自动测试使用临时目录和模拟 API/SDK 边界，覆盖：
+Automated tests use temporary directories and simulated API/SDK boundaries, covering:
 
-- 递归、排除、符号链接、缺失挂载与大写扩展名。
-- 单文件/镜头配对、迟到镜头、重名分段、移动与重复副本。
-- 文件变化、隐藏提交、转换期间变化与临时输出碰撞。
-- 增量时间边界、老视频新入库、分页失败、水位不前进、全量核对。
-- 参数指纹、相同配方去重、主动重做与参数变更。
-- SDK 退出 0 但报错、模型降级、媒体/元数据校验失败。
-- 上传成功但响应丢失、重复上传、下载哈希不一致、账号切换。
-- 清理前后崩溃、重启恢复、取消、多个调度者竞争。
-- 新旧同 ID、既有资产冲突、关联迁移失败、旧版清理失败与源片删除保护。
+- Recursion, exclusions, symlinks, missing mounts, and uppercase extensions.
+- Single-file/lens pairing, late lenses, colliding segment names, moves, and duplicate copies.
+- Source changes, hidden copy submission, changes during conversion, and temporary-output collisions.
+- Incremental time boundaries, newly imported old recordings, pagination failure, stationary watermarks, and full reconciliation.
+- Recipe fingerprints, same-recipe deduplication, forced regeneration, and changed settings.
+- SDK exit 0 with errors, model downgrades, and media/metadata validation failures.
+- Successful uploads with lost responses, duplicate uploads, server hash mismatches, and account changes.
+- Crashes around cleanup/receipts, restart recovery, cancellation, and competing schedulers.
+- Equal old/new IDs, unrelated duplicate conflicts, copy/trash failures, and original-source deletion protection.
 
-真实 Linux/GPU 测试另验 SDK 启动、短 INSV、双镜头样本（若有）、INSP、音频/日期/投影、GPU 使用及 Immich 360 播放。无对应样本时该机型/模式标为未验证。对实际部署版本先做只读能力核验，然后在受控测试资产上验证上传、查重、复制、回收站和原片下载。
+Real Linux/GPU acceptance separately checks SDK startup, short INSV, dual-lens samples when available, INSP, audio/date/projection, GPU utilization, and Immich 360 playback. Unsupported-by-evidence camera modes remain unverified. Inspect actual server capabilities read-only first, then validate upload, deduplication, copy, trash, and original downloads with controlled test assets.
 
-本设计阶段验证限于文档一致性和已核对源码，不声称任何 SDK/GPU/服务器能力已经实测。
+The design phase established document consistency and inspected-source behavior only; it did not claim measured SDK/GPU/server compatibility.
 
-## 12. 依据与后续
+## 12. Evidence and Next Steps
 
-本地依据：仓库 `AGENTS.md`、当前源代码、`docs/DEVELOPMENT.md`；下载 ZIP 的目录；此前解出的 `/tmp/insta360-sdk-inspect/MediaSDK-3.1.5-20260819-linux64/README.txt` 与 `example/main.cc`；sjopswiki 的项目、inbox、SDK 检查与集成研究记录。运维记录不是本轮在线健康验证。
+Local evidence includes repository `AGENTS.md`, current source, `docs/DEVELOPMENT.md`, downloaded archive contents, previously extracted `/tmp/insta360-sdk-inspect/MediaSDK-3.1.5-20260819-linux64/README.txt` and `example/main.cc`, and sjopswiki project/inbox/SDK/integration records. Operations notes are not live-health verification for this development task.
 
-官方接口核对固定为 v3.2.4；实际服务器版本需在连接预检中确认：
+Official API inspection is pinned to v3.2.4. Connection preflight must confirm the actual server version:
 
-- [搜索筛选、排序和 cursor](https://github.com/immich-app/immich/blob/v3.2.4/server/src/dtos/search.dto.ts)
-- [metadata search 权限](https://github.com/immich-app/immich/blob/v3.2.4/server/src/controllers/search.controller.ts)
-- [上传、原片下载、SHA-1 查重](https://github.com/immich-app/immich/blob/v3.2.4/server/src/controllers/asset-media.controller.ts)
-- [同步流要求 session，拒绝 API Key](https://github.com/immich-app/immich/blob/v3.2.4/server/src/services/sync.service.ts)
-- [复制和删除接口](https://github.com/immich-app/immich/blob/v3.2.4/server/src/controllers/asset.controller.ts)
-- [复制范围与回收站语义](https://github.com/immich-app/immich/blob/v3.2.4/server/src/services/asset.service.ts)
-- [内部上传示例](https://docs.immich.app/guides/python-file-upload/)
+- [Search filters, sorting, and cursors](https://github.com/immich-app/immich/blob/v3.2.4/server/src/dtos/search.dto.ts)
+- [Metadata search permissions](https://github.com/immich-app/immich/blob/v3.2.4/server/src/controllers/search.controller.ts)
+- [Upload, original download, and SHA-1 duplicate checks](https://github.com/immich-app/immich/blob/v3.2.4/server/src/controllers/asset-media.controller.ts)
+- [Sync stream requires a session and rejects API keys](https://github.com/immich-app/immich/blob/v3.2.4/server/src/services/sync.service.ts)
+- [Copy and delete APIs](https://github.com/immich-app/immich/blob/v3.2.4/server/src/controllers/asset.controller.ts)
+- [Copy scope and trash semantics](https://github.com/immich-app/immich/blob/v3.2.4/server/src/services/asset.service.ts)
+- [Internal upload example](https://docs.immich.app/guides/python-file-upload/)
 
-文档审阅后进入 Superpowers writing-plans，明确模块/接口、schema、校验断言、测试和迁移顺序。后续执行方式由用户选择；本轮不自动启动子代理或新聊天。NAS 部署单独记录并按对应运维规则验证。
+The design specified proceeding to Superpowers writing-plans after review, defining modules/interfaces, schema, assertions, testing, and migration order. The user selects execution mode; the design phase does not automatically create agents or chats. NAS deployment is recorded separately and follows the relevant operations rules. Implementation progress and verified results are recorded in the tracked plan and validation document.

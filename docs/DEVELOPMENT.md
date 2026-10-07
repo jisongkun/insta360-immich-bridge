@@ -28,6 +28,8 @@ SDK/model bytes are included in effective recipe identity and checked again befo
 
 ## Local validation
 
+Use English for interface labels, help text, repository documentation and project communication. UI date/time formatting explicitly uses `en-US`; capture-date timezone configuration remains independent.
+
 Use Python 3.11+ and ignored `.venv` with `backend/requirements-dev.txt`. Run `PYTHONPATH=backend .venv/bin/python -m pytest backend/tests -q`. Legacy syntax without execution: `python3 -c "import ast,pathlib; ast.parse(pathlib.Path('backend/auto-sticher.py').read_text())"`. Frontend: `cd frontend && npm ci && npm run build`. Build/config evidence and outstanding Linux/real-camera acceptance belong in `docs/VALIDATION.md`.
 
 Tests use real temporary files/SQLite, loopback HTTP, tiny FFmpeg media and a simulated SDK subprocess through the original worker. Simulated SDK tests prove gateway behavior, not Insta360 media/GPU compatibility. Production acceptance must include actual single-file video, lens pairs, INSP, selected codec/FlowState/model modes, reconnect/restart and API replacement on the user's server.

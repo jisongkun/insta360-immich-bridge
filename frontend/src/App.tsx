@@ -241,7 +241,7 @@ export default function App() {
     stitchSettings,
   ]);
   const lastUpdated = statusQuery.dataUpdatedAt
-    ? new Date(statusQuery.dataUpdatedAt).toLocaleTimeString()
+    ? new Date(statusQuery.dataUpdatedAt).toLocaleTimeString("en-US")
     : "—";
   const controlsLocked = mutation.isPending || !!activeTask || loginOpen;
   const activeTasks = statusQuery.data?.active_tasks ?? [];
@@ -418,7 +418,8 @@ export default function App() {
       <section className="panel summary">
         <h2>Job Summary</h2>
         <p className="muted">
-          显示阶段、耗时和容量估算；完成以 Immich 原文件核验为准。
+          Shows stages, elapsed time, and size estimates. Completion requires
+          verification of the Immich original.
         </p>
         <div className="summary-grid">
           <SummaryCard label="Queued" value={queuedJobs} tone="queued" />
@@ -457,8 +458,8 @@ export default function App() {
       />
       <div className="selection-actions">
         <span>
-          新设置只用于新任务。选择已完成的成片可重新生成并替换；旧成片进入
-          Immich 回收站。
+          New settings apply to new jobs. Select completed exports to regenerate
+          and replace them; previous exports move to Immich trash.
         </span>
         <button
           type="button"
@@ -488,7 +489,7 @@ export default function App() {
             )
           }
         >
-          重新生成并替换所选导出
+          Regenerate and Replace Selected Exports
         </button>
         {regenerateMutation.isError && (
           <p className="error">{regenerateMutation.error.message}</p>

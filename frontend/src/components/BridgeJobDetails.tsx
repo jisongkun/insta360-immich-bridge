@@ -33,25 +33,25 @@ export function BridgeJobDetails({
     <div className="modal-backdrop">
       <div className="modal job-details">
         <div className="actions-header">
-          <h3>任务 {job.id}</h3>
+          <h3>Job {job.id}</h3>
           <button className="ghost" onClick={onClose}>
-            关闭
+            Close
           </button>
         </div>
         <p>
-          当前阶段：{logs.data?.stage ?? job.stage} · 继续位置：
+          Current stage: {logs.data?.stage ?? job.stage} · Resume phase:{" "}
           {logs.data?.phase ?? job.phase}
         </p>
         <p>
-          Immich asset：{job.asset_id ?? "未上传"} · 核验：
-          {job.verified ? "通过" : "待核验"} · 本地成片：
-          {job.local_deleted ? "已清理" : "保留／尚未生成"}
+          Immich asset: {job.asset_id ?? "not uploaded"} · Verification:{" "}
+          {job.verified ? "passed" : "pending"} · Local export:{" "}
+          {job.local_deleted ? "deleted" : "retained / not generated yet"}
         </p>
         {(logs.data?.error || job.error) && (
           <p className="error">{logs.data?.error || job.error}</p>
         )}
         <details>
-          <summary>原片、目标和有效参数</summary>
+          <summary>Sources, Target, and Effective Settings</summary>
           <pre>{JSON.stringify(details.data, null, 2)}</pre>
         </details>
         <div className="action-buttons">
@@ -59,17 +59,17 @@ export function BridgeJobDetails({
             className="ghost"
             onClick={() => events.setPaused(!events.paused)}
           >
-            {events.paused ? "继续日志" : "暂停日志"}
+            {events.paused ? "Resume Logs" : "Pause Logs"}
           </button>
           <select
-            aria-label="事件级别"
+            aria-label="Event level"
             value={level}
             onChange={(e) => setLevel(e.target.value)}
           >
-            <option value="all">全部级别</option>
-            <option value="error">错误</option>
-            <option value="warn">警告</option>
-            <option value="info">信息</option>
+            <option value="all">All Levels</option>
+            <option value="error">Error</option>
+            <option value="warn">Warning</option>
+            <option value="info">Info</option>
           </select>
           <button
             className="ghost"
@@ -89,18 +89,19 @@ export function BridgeJobDetails({
               )
             }
           >
-            下载已加载日志
+            Download Loaded Logs
           </button>
         </div>
-        <h4>阶段事件（最多保留 5000 条；级别按事件阶段分类）</h4>
+        <h4>Stage Events (up to 5,000 retained; levels derived from stages)</h4>
         {events.data
           ?.filter((e) => level === "all" || eventLevel(e) === level)
           .map((e) => (
             <div key={e.seq} className="mono">
-              {new Date(e.at * 1000).toLocaleString()} [{e.stage}] {e.message}
+              {new Date(e.at * 1000).toLocaleString("en-US")} [{e.stage}]{" "}
+              {e.message}
             </div>
           ))}
-        <h4>SDK／转换日志（每文件末尾 64 KiB）</h4>
+        <h4>SDK / Conversion Logs (last 64 KiB per file)</h4>
         {logs.data?.logs.map((l) => (
           <details key={l.name} open>
             <summary>{l.name}</summary>

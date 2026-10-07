@@ -50,3 +50,11 @@ First Linux AMD64 image build failed while fetching Ubuntu packages from archive
 ## Remaining acceptance
 
 Real Linux NVIDIA conversion and actual INSV pair/single-file/INSP camera modes; model-dependent features and output-size/codec limits; actual Immich version/permissions, API upload/server-original verification and association migration on the target deployment; panorama playback after Immich transcode. No real media, API keys or NAS system were accessed. Actions stay disabled; push is source control only.
+
+## English interface and documentation
+
+- Translated the bridge settings, job details, table labels, application help, README and approved design specification into English. Displayed dates/times use `en-US`; conversion and delivery behavior are unchanged.
+- Clean `npm ci && npm run build` passed. After formatting, repeated build passed with **84 modules, 323 ms**. `git diff --check` passed.
+- Scanned all Git-tracked UTF-8 text files for Chinese ideographs: no matches. The HTML document already declares `lang="en"`.
+- Rendered production build in the in-app browser against a temporary localhost fixture. Verified English dashboard, expanded integration settings, job receipt/event labels and date/time display. Saved an English settings screenshot outside the repository. Fixture state did not invoke Immich, SDK conversion or production actions; temporary preview was stopped after inspection.
+- Backend tests were not repeated for this text/locale-only change. The prior backend acceptance limits above still apply.

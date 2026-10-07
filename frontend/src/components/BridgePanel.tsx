@@ -94,28 +94,30 @@ export function BridgePanel({
   return (
     <section className="panel bridge-panel">
       <div className="actions-header">
-        <h2>Immich 集成</h2>
+        <h2>Immich Integration</h2>
         <button className="ghost" onClick={() => setOpen(!open)}>
-          连接与扫描设置
+          Connection and Discovery Settings
         </button>
       </div>
       <p>
         {status?.connection.ok
-          ? `已连接 ${status.connection.server} · ${status.connection.version}`
-          : status?.connection.error || "尚未验证连接"}{" "}
-        · 自动运行{" "}
+          ? `Connected to ${status.connection.server} · ${status.connection.version}`
+          : status?.connection.error || "Connection not verified"}{" "}
+        · Automatic processing{" "}
         {status?.api_paused
-          ? "因权限错误暂停"
+          ? "paused due to an authorization error"
           : status?.automatic
-            ? "开启"
-            : "关闭"}
+            ? "on"
+            : "off"}
       </p>
       <p className="muted">
-        上次发现 {status?.scan_summary.groups ?? "—"} 组完整原片。API 下次运行：
+        Last discovery: {status?.scan_summary.groups ?? "—"} complete source
+        groups. Next API scan:{" "}
         {status?.next_api_scan
-          ? new Date(status.next_api_scan * 1000).toLocaleString()
-          : "手动"}
-        。原片保留；成片经服务器 SHA-256 核验后删除本地副本。
+          ? new Date(status.next_api_scan * 1000).toLocaleString("en-US")
+          : "manual"}
+        . Originals are retained. Local exports are deleted after server SHA-256
+        verification.
       </p>
       <div className="action-buttons">
         <button
@@ -123,14 +125,14 @@ export function BridgePanel({
           onClick={() => action.mutate("test_connection")}
           disabled={action.isPending}
         >
-          测试连接
+          Test Connection
         </button>
         <button
           className="primary"
           onClick={() => action.mutate("full_run")}
           disabled={action.isPending}
         >
-          手动发现并处理
+          Discover and Process Now
         </button>
         {status?.active_tasks?.map((t) => (
           <button
@@ -144,7 +146,7 @@ export function BridgePanel({
               }).then(() => cache.invalidateQueries({ queryKey: ["status"] }))
             }
           >
-            停止 {t.action}
+            Stop {t.action}
           </button>
         ))}
       </div>
@@ -153,7 +155,7 @@ export function BridgePanel({
       {open && draft && (
         <div className="bridge-settings">
           <label>
-            Immich 地址
+            Immich URL
             <input
               value={draft.immich_url}
               onChange={(e) => change("immich_url", e.target.value)}
@@ -161,18 +163,19 @@ export function BridgePanel({
             />
           </label>
           <p className="muted">
-            API Key
-            从服务器环境变量或只读密钥文件读取，不会出现在网页设置和任务日志中。文件路径非空时优先使用文件。
+            The API key is read from a server environment variable or a
+            read-only secret file. Its value is excluded from settings responses
+            and job logs. A configured file takes priority.
           </p>
           <label>
-            API Key 环境变量名称
+            API Key Environment Variable
             <input
               value={draft.api_key_env}
               onChange={(e) => change("api_key_env", e.target.value)}
             />
           </label>
           <label>
-            API Key 文件路径
+            API Key File Path
             <input
               value={draft.api_key_file}
               onChange={(e) => change("api_key_file", e.target.value)}
@@ -185,7 +188,8 @@ export function BridgePanel({
               checked={draft.api_source_enabled}
               onChange={(e) => change("api_source_enabled", e.target.checked)}
             />
-            从 Immich API 发现原片（关闭后仅扫描指定目录）
+            Discover originals through the Immich API (disable for folder-only
+            discovery)
           </label>
           <label>
             <input
@@ -193,10 +197,11 @@ export function BridgePanel({
               checked={draft.download_sources}
               onChange={(e) => change("download_sources", e.target.checked)}
             />
-            通过 API 下载原片（关闭时使用只读路径映射）
+            Download originals through the API (otherwise use read-only path
+            mappings)
           </label>
           <label>
-            额外扫描目录（每行一个，包含子目录）
+            Additional source folders (one per line, including subfolders)
             <textarea
               rows={3}
               value={draft.folders.join("\n")}
@@ -207,7 +212,7 @@ export function BridgePanel({
             />
           </label>
           <label>
-            排除路径通配符（每行一个）
+            Excluded path patterns (one per line)
             <textarea
               rows={2}
               value={draft.exclusions.join("\n")}
@@ -217,8 +222,8 @@ export function BridgePanel({
             />
           </label>
           <p>
-            原片路径映射：左侧为 Immich originalPath
-            前缀，右侧为本工具可读挂载目录。
+            Source mappings: Immich originalPath prefix on the left; the
+            bridge's readable mount on the right.
           </p>
           {draft.mappings.map((m, i) => (
             <div className="mapping-row" key={i}>
@@ -256,7 +261,7 @@ export function BridgePanel({
                   )
                 }
               >
-                移除
+                Remove
               </button>
             </div>
           ))}
@@ -266,7 +271,7 @@ export function BridgePanel({
               change("mappings", [...draft.mappings, { from: "", to: "" }])
             }
           >
-            添加映射
+            Add Mapping
           </button>
           <label>
             <input
@@ -274,7 +279,7 @@ export function BridgePanel({
               checked={draft.automatic}
               onChange={(e) => change("automatic", e.target.checked)}
             />
-            按间隔自动发现并处理
+            Automatically discover and process at configured intervals
           </label>
           <label>
             <input
@@ -282,7 +287,8 @@ export function BridgePanel({
               checked={draft.automatic_photos}
               onChange={(e) => change("automatic_photos", e.target.checked)}
             />
-            自动处理 INSP 照片（默认关闭，需独立样本验收）
+            Automatically process INSP photos (off by default; requires separate
+            sample validation)
           </label>
           {(
             [
@@ -295,13 +301,13 @@ export function BridgePanel({
             <label key={key}>
               {
                 {
-                  interval: "API 间隔",
-                  folder_interval: "目录扫描间隔",
-                  stable_seconds: "文件稳定等待",
-                  full_interval: "全量核对间隔",
+                  interval: "API Scan Interval",
+                  folder_interval: "Folder Scan Interval",
+                  stable_seconds: "File Stability Wait",
+                  full_interval: "Full Reconciliation Interval",
                 }[key]
-              }
-              （秒）
+              }{" "}
+              (seconds)
               <input
                 type="number"
                 min={1}
@@ -311,15 +317,16 @@ export function BridgePanel({
             </label>
           ))}
           <label>
-            文件名拍摄时间所属时区
+            Time Zone for Filename Capture Dates
             <input
               value={draft.source_timezone}
               onChange={(e) => change("source_timezone", e.target.value)}
             />
           </label>
           <p>
-            分辨率、码率和拼接算法在原 Settings
-            中设置。以下开关沿用原转换器；保存不会自动替换已有导出。
+            Set resolution, bitrate, and stitching algorithm in Settings. The
+            switches below use the existing converter. Saving does not
+            automatically replace existing exports.
           </p>
           {(
             [
@@ -344,10 +351,10 @@ export function BridgePanel({
               {
                 {
                   enable_h265: "H.265",
-                  enable_flowstate: "FlowState 防抖",
-                  enable_directionlock: "方向锁定（需要防抖）",
+                  enable_flowstate: "FlowState Stabilization",
+                  enable_directionlock: "Direction Lock (requires FlowState)",
                   enable_stitchfusion: "Stitch Fusion",
-                  disable_cuda: "禁用 CUDA",
+                  disable_cuda: "Disable CUDA",
                 }[key]
               }
             </label>
@@ -357,16 +364,17 @@ export function BridgePanel({
             disabled={save.isPending}
             onClick={() => save.mutate()}
           >
-            {save.isPending ? "保存中…" : "保存设置"}
+            {save.isPending ? "Saving…" : "Save Settings"}
           </button>
           {save.isError && <p className="error">{save.error.message}</p>}
         </div>
       )}
       <details>
-        <summary>最近运行日志</summary>
+        <summary>Recent Activity</summary>
         {recent.map((e) => (
           <div className="mono" key={e.seq}>
-            {new Date(e.at * 1000).toLocaleString()} [{e.stage}] {e.message}
+            {new Date(e.at * 1000).toLocaleString("en-US")} [{e.stage}]{" "}
+            {e.message}
           </div>
         ))}
       </details>

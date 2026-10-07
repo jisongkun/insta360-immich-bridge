@@ -191,7 +191,7 @@ const formatBytes = (bytes: number) => {
 
 const formatDate = (timestamp: string) => {
   try {
-    return new Date(timestamp).toLocaleString();
+    return new Date(timestamp).toLocaleString("en-US");
   } catch {
     return timestamp;
   }
@@ -467,8 +467,8 @@ export function JobTable({
                   </div>
                 )}
               </th>
-              <th>成片字节／估计容量</th>
-              <th>耗时</th>
+              <th>Export Bytes / Estimated Size</th>
+              <th>Elapsed</th>
               <th>Output</th>
               <th>PID</th>
               <th>Updated</th>
@@ -534,7 +534,8 @@ export function JobTable({
                       {job.replaced_by && <small>Superseded</small>}
                       {job.blocked_by && (
                         <small className="error">
-                          等待恢复前一版本 {job.blocked_by}
+                          Waiting for previous generation {job.blocked_by} to
+                          resume
                         </small>
                       )}
                       {job.error && (
@@ -550,7 +551,7 @@ export function JobTable({
                   <td>
                     <small>
                       {formatBytes(job.stitched_size)} /{" "}
-                      {formatBytes(job.expected_size)}（容量估算）
+                      {formatBytes(job.expected_size)} (size estimate)
                     </small>
                   </td>
                   <td className="mono">
