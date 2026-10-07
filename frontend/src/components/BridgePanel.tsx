@@ -164,7 +164,7 @@ export function BridgePanel({
           <button
             className="ghost"
             key={t.id}
-            disabled={stop.isPending}
+            disabled={!enabled || stop.isPending}
             onClick={() => stop.mutate(t.id)}
           >
             Stop {t.action}
@@ -175,7 +175,7 @@ export function BridgePanel({
       {stop.isError && <p className="error">{stop.error.message}</p>}
       {settings.isError && <p className="error">{settings.error.message}</p>}
       {open && draft && (
-        <fieldset className="bridge-settings" disabled={save.isPending}>
+        <fieldset className="bridge-settings" disabled={!enabled || save.isPending}>
           <legend>Connection and Discovery Settings</legend>
           <label>
             Immich URL

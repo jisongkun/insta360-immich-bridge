@@ -7,6 +7,7 @@ const headers = {
 };
 
 const TOKEN_KEY = "autostitcher_login_token";
+export const AUTH_REQUIRED_EVENT = "bridge-auth-required";
 
 export function setAuthToken(token: string | null): void {
   if (!token) {
@@ -44,6 +45,10 @@ export async function request<T>(
       status?: number;
     };
     error.status = response.status;
+    if (response.status === 401 && path !== "/login" && getAuthToken() === token) {
+      setAuthToken(null);
+      window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+    }
     throw error;
   }
   return response.json() as Promise<T>;

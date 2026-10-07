@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { BridgePanel } from "./components/BridgePanel";
+import { getAuthToken, request, setAuthToken } from "./api";
 import type { BridgeSettings, Job, StatusResponse } from "./types";
 
 const profile = {
@@ -94,6 +95,7 @@ function mount(panel = false) {
   return cache;
 }
 beforeEach(() => {
+  setAuthToken("test-bridge-token");
   saved = structuredClone(initialSettings);
   status = structuredClone(initialStatus);
   submissions = [];
@@ -147,7 +149,98 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  setAuthToken(null);
   vi.unstubAllGlobals();
+});
+
+describe("bridge authentication", () => {
+  it("locks already open settings and Stop controls when login expires", async () => {
+    const user = userEvent.setup();
+    const cache = mount();
+    await screen.findByText(/Connected to/);
+    await user.click(screen.getByRole("button", { name: "Connection and Discovery Settings" }));
+    await screen.findByLabelText("Immich URL", { exact: true });
+    await user.click(screen.getByRole("button", { name: "Settings", exact: true }));
+    await act(async () => cache.setQueryData(["status"], {
+      ...status,
+      active_tasks: [{ id: "running", action: "scan", started_at: "2026-10-07T12:00:00Z" }],
+    }));
+    const originalFetch = fetch;
+    vi.stubGlobal("fetch", (input: string | Request | URL, init?: RequestInit) =>
+      String(input) === "/status"
+        ? Promise.resolve(response({ error: "Login required" }, 401))
+        : originalFetch(input, init),
+    );
+    await act(async () => { await cache.invalidateQueries({ queryKey: ["status"] }); });
+    await screen.findByRole("heading", { name: "Bridge Login" });
+    for (const name of ["Save", "Compute Ratio", "Stop scan"]) {
+      expect((screen.getByRole("button", { name, exact: true }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    // The connection editor's native disabled fieldset blocks its Save too.
+    expect(screen.getByRole("group", { name: "Connection and Discovery Settings" }).getAttribute("disabled")).not.toBeNull();
+  });
+  it("a late unauthorized response cannot clear a newer browser login", async () => {
+    let release!: (value: Response) => void;
+    vi.stubGlobal("fetch", () => new Promise<Response>((resolve) => {
+      release = resolve;
+    }));
+    const pending = request("/status").catch(
+      (error: Error & { status?: number }) => error.status,
+    );
+    setAuthToken("newer-bridge-token");
+    release(response({ error: "Login required" }, 401));
+    expect(await pending).toBe(401);
+    expect(getAuthToken()).toBe("newer-bridge-token");
+  });
+  it("opens login immediately on a new browser and blocks protected actions", () => {
+    setAuthToken(null);
+    vi.stubGlobal("fetch", () => new Promise<Response>(() => {}));
+    mount();
+    expect(screen.getByRole("heading", { name: "Bridge Login" })).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Test Connection" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("a rejected Test Connection opens login and can recover with the bridge token", async () => {
+    const user = userEvent.setup();
+    mount();
+    await screen.findByText(/Connected to/);
+    const originalFetch = fetch;
+    let taskAuthorized = false;
+    vi.stubGlobal("fetch", (input: string | Request | URL, init?: RequestInit) => {
+      if (String(input) === "/tasks") {
+        taskAuthorized = (init?.headers as Record<string, string>).Authorization ===
+          "Bearer replacement-bridge-token";
+        return Promise.resolve(taskAuthorized
+          ? response({ task_id: "connection-task", scheduled: "test_connection" })
+          : response({ error: "Login required" }, 401));
+      }
+      if (String(input) === "/login") {
+        return Promise.resolve(JSON.parse(String(init?.body)).token === "replacement-bridge-token"
+          ? response({ ok: true }) : response({ error: "Invalid token" }, 401));
+      }
+      return originalFetch(input, init);
+    });
+    await user.click(screen.getByRole("button", { name: "Test Connection" }));
+    await screen.findByRole("heading", { name: "Bridge Login" });
+    expect(getAuthToken()).toBeNull();
+    const token = screen.getByLabelText("Bridge access token");
+    await user.clear(token);
+    await user.type(token, "wrong-token");
+    await user.click(screen.getByRole("button", { name: "Login", exact: true }));
+    await screen.findByText(/Invalid token/);
+    expect((token as HTMLInputElement).value).toBe("wrong-token");
+    await user.clear(token);
+    await user.type(token, "replacement-bridge-token");
+    await user.click(screen.getByRole("button", { name: "Login", exact: true }));
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Bridge Login" })).toBeNull(),
+    );
+    await user.click(screen.getByRole("button", { name: "Test Connection" }));
+    await waitFor(() => expect(taskAuthorized).toBe(true));
+    expect(getAuthToken()).toBe("replacement-bridge-token");
+  });
 });
 
 describe("configuration and task usability", () => {

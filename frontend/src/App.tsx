@@ -13,6 +13,7 @@ import {
   terminateTask,
   request,
   computeExpectedRatio,
+  AUTH_REQUIRED_EVENT,
 } from "./api";
 import type { BridgeSettings, StatusResponse, Job, TaskAction } from "./types";
 import { JobTable } from "./components/JobTable";
@@ -74,11 +75,15 @@ const statusOrder: Record<TaskAction | "status", number> = {
 export default function App() {
   const [detailsJobId, setDetailsJobId] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const [loginOpen, setLoginOpen] = useState(() => !getAuthToken());
   const [pollingFast, setPollingFast] = useState(false);
   const statusQuery = useQuery({
     queryKey: ["status"],
     queryFn: fetchStatus,
     refetchInterval: pollingFast ? 1000 : 15000,
+    enabled: !loginOpen,
+    retry: (count, error: Error & { status?: number }) =>
+      error.status !== 401 && count < 3,
   });
 
   const mutation = useMutation({
@@ -96,7 +101,6 @@ export default function App() {
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsGeneration = useRef(0);
-  const [loginOpen, setLoginOpen] = useState(false);
   const [loginTokenValue, setLoginTokenValue] = useState("");
   const [activeTask, setActiveTask] = useState<{
     id: string;
@@ -267,6 +271,7 @@ export default function App() {
     !!activeTask ||
     activeTasks.length > 0 ||
     loginOpen ||
+    !statusQuery.data ||
     stitchSelectedMutation.isPending ||
     regenerateMutation.isPending ||
     thumbnailsSelectedMutation.isPending;
@@ -280,12 +285,10 @@ export default function App() {
   }, [loginTokenValue]);
 
   useEffect(() => {
-    const error = statusQuery.error as (Error & { status?: number }) | null;
-    if (statusQuery.isError && error?.status === 401) {
-      setAuthToken(null);
-      setLoginOpen(true);
-    }
-  }, [statusQuery.isError, statusQuery.error]);
+    const requireLogin = () => setLoginOpen(true);
+    window.addEventListener(AUTH_REQUIRED_EVENT, requireLogin);
+    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, requireLogin);
+  }, []);
 
   useEffect(() => {
     if (!activeTask || !statusQuery.data?.active_tasks) {
@@ -362,7 +365,10 @@ export default function App() {
         </div>
       </header>
 
-      <BridgePanel status={statusQuery.data} enabled={!loginOpen} />
+      <BridgePanel
+        status={statusQuery.data}
+        enabled={!loginOpen && Boolean(statusQuery.data)}
+      />
       {detailsJob && (
         <BridgeJobDetails
           job={detailsJob}
@@ -382,7 +388,7 @@ export default function App() {
                     onClick={() =>
                       activeTask && terminateMutation.mutate(activeTask.id)
                     }
-                    disabled={terminateMutation.isPending}
+                    disabled={loginOpen || terminateMutation.isPending}
                   >
                     {terminateMutation.isPending ? "Stopping…" : "Confirm?"}
                   </button>
@@ -391,7 +397,7 @@ export default function App() {
                     type="button"
                     className="task-spinner"
                     onClick={() => setConfirmStop(true)}
-                    disabled={!activeTask || terminateMutation.isPending}
+                    disabled={loginOpen || !activeTask || terminateMutation.isPending}
                     aria-label="Stop running task"
                   >
                     <span className="spinner-ring" aria-hidden="true" />
@@ -641,7 +647,7 @@ export default function App() {
                   computeRatioMutation.mutate(settingsGeneration.current)
                 }
                 disabled={
-                  computeRatioMutation.isPending || settingsMutation.isPending
+                  loginOpen || computeRatioMutation.isPending || settingsMutation.isPending
                 }
               >
                 {computeRatioMutation.isPending
@@ -721,7 +727,7 @@ export default function App() {
                 type="button"
                 className="primary"
                 onClick={() => settingsMutation.mutate()}
-                disabled={settingsMutation.isPending}
+                disabled={loginOpen || settingsMutation.isPending}
               >
                 {settingsMutation.isPending ? "Saving…" : "Save"}
               </button>
@@ -744,9 +750,14 @@ export default function App() {
       {loginOpen && (
         <div className="modal-backdrop">
           <div className="modal">
-            <h3>Login</h3>
-            <p className="muted">Enter the access token to continue.</p>
+            <h3>Bridge Login</h3>
+            <p className="muted">
+              Sign in with the bridge access token. This browser remembers your
+              login. Immich connection settings are stored on the server.
+            </p>
+            <label htmlFor="bridge-login-token">Bridge access token</label>
             <input
+              id="bridge-login-token"
               type="password"
               value={loginTokenValue}
               onChange={(event) => setLoginTokenValue(event.target.value)}

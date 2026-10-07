@@ -15,6 +15,7 @@ The review used Superpowers systematic debugging, regression tests, a separate r
 | Stop did not reach discovery/thumbnails; Stop errors were unhandled | Safe-boundary cancellation throughout discovery, chunks and queued thumbnails; visible Stop errors | Blocking thumbnail/discovery tests, metadata watermark and partial download tests, React Stop error |
 | Details displayed the receipt captured at click time | Read current polled job by ID | React receipt changes to verified/uploaded/deleted while open |
 | Missing secret file broke status/logging | Treat unreadable secret as unconfigured | Authenticated status/logging regression |
+| New browser could click Test Connection before login; action 401 did not immediately open Login | Immediate Bridge Login when browser token is absent; controls wait for status; protected API 401 opens login without retry delay | React fresh-browser and Test Connection rejection/login/retry tests; late 401 cannot clear a newer login |
 
 Managed key files are not in Git. Blank Save retains external read-only secrets. Previous managed files remain for rollback and require the protected config-volume backup; this does not update Bitwarden or revoke Immich keys. Cancellation waits for in-flight HTTP/probe/thumbnail operations. The JSON and SQLite settings stores are validated together but are not crash-atomic across both files.
 
