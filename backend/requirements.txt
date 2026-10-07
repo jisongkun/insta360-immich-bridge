@@ -1,3 +1,4 @@
 Flask==3.1.2
 requests==2.32.5
 requests-toolbelt==1.0.0
+spatialmedia @ git+https://github.com/timminator/Spatial-Media-Metadata-Injector.git@37ec4220a7b3101864480c6c860b469204fd2a0a

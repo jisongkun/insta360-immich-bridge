@@ -230,13 +230,16 @@ def inject_image_metadata(path: str, timestamp_str: Optional[str] = None) -> boo
         # timestamp_str is YYYYMMDD_HHMMSS
         # exiftool expects YYYY:MM:DD HH:MM:SS
         try:
-            ts_iso = f"{timestamp_str[:4]}:{timestamp_str[4:6]}:{timestamp_str[6:8]} {timestamp_str[9:11]}:{timestamp_str[11:13]}:{timestamp_str[13:15]}"
+            if "T" in timestamp_str:
+                ts_iso = datetime.fromisoformat(timestamp_str).strftime("%Y:%m:%d %H:%M:%S%z")
+            else:
+                ts_iso = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S").strftime("%Y:%m:%d %H:%M:%S")
             cmd_inject.extend([
                 f"-DateTimeOriginal={ts_iso}",
                 f"-CreateDate={ts_iso}",
                 f"-ModifyDate={ts_iso}",
             ])
-        except IndexError:
+        except (IndexError, ValueError):
             LOGGER.warning("Failed to parse timestamp %s for exiftool", timestamp_str)
 
     cmd_inject.append(path)
@@ -302,13 +305,14 @@ def configure_paths(
     db_path: Optional[str] = None,
 ) -> None:
     """Update global storage paths from CLI args or environment."""
-    global APP_STORAGE_DIR, RAW_DIR, OUT_DIR, DATABASE_PATH
+    global APP_STORAGE_DIR, RAW_DIR, OUT_DIR, DATABASE_PATH, THUMBNAIL_DIR
     if storage_dir:
         APP_STORAGE_DIR = storage_dir.rstrip("/")
     RAW_DIR = raw_dir or os.path.join(APP_STORAGE_DIR, "raw")
     OUT_DIR = out_dir or os.path.join(APP_STORAGE_DIR, "stitched")
     env_db = os.getenv("AUTO_STITCHER_DB")
     DATABASE_PATH = db_path or env_db or os.path.join(APP_STORAGE_DIR, "autostitcher.db")
+    THUMBNAIL_DIR = os.path.join(APP_STORAGE_DIR, "thumbnails")
 
 
 def count_video_streams(path: str) -> Optional[int]:
@@ -651,6 +655,8 @@ class AutoStitcher:
         self.enable_directionlock = DEFAULT_ENABLE_DIRECTIONLOCK
         self.enable_stitchfusion = DEFAULT_ENABLE_STITCHFUSION
         self.disable_cuda = DEFAULT_DISABLE_CUDA
+        self.sdk_executable = os.getenv("MEDIA_SDK_EXECUTABLE", "MediaSDKTest")
+        self.model_root = os.getenv("MODEL_ROOT_DIR", "/opt/MediaSDK-3.1.5-linux/bin/models/")
         LOGGER.info(
             "AutoStitcher initialized with DB at %s (debug=%s)", DATABASE_PATH, self.debug_mode
         )
@@ -1152,6 +1158,27 @@ class AutoStitcher:
             worker.start()
             LOGGER.info("Started stitching thread %s for job %s", worker.name, job_id)
 
+    def build_sdk_command(self, sources: List[str], output: str, output_size: str) -> List[str]:
+        """Existing conversion options, adapted for the user-provided 3.1.5 CLI."""
+        if self.stitch_type == "aistitch" and not os.path.isdir(self.model_root):
+            raise ValueError("AI stitch model root is missing")
+        cmd = [self.sdk_executable, "-inputs", *sources, "-output_size", output_size]
+        if self.model_root:
+            cmd.extend(["-model_root_dir", self.model_root.rstrip("/") + "/"])
+        if not self.original_bitrate and self.bitrate:
+            cmd.extend(["-bitrate", self.bitrate])
+        for enabled, flag in (
+            (self.enable_h265, "-enable_h265_encoder"),
+            (self.enable_flowstate, "-enable_flowstate"),
+            (self.enable_directionlock, "-enable_directionlock"),
+            (self.enable_stitchfusion, "-enable_stitchfusion"),
+            (self.disable_cuda, "-disable_cuda"),
+        ):
+            if enabled:
+                cmd.append(flag)
+        cmd.extend(["--log_level", "info", "-stitch_type", self.stitch_type, "-output", output])
+        return cmd
+
     def _run_job(self, job_id: str) -> None:
         try:
             row = self.db.fetch_job(job_id)
@@ -1197,46 +1224,12 @@ class AutoStitcher:
                     LOGGER.warning(
                         "Falling back to manual output size %s for job %s", output_size_value, job_id
                     )
-            cmd = [
-                "MediaSDKTest",
-                "-inputs",
-                *sources,
-                "-output_size",
-                output_size_value,
-            ]
-            if self.stitch_type == "aistitch":
-                model_path = (self.ai_stitch_model_path or "").strip()
-                if (not model_path or not os.path.exists(model_path)) and os.path.exists("/ai_stitcher_v2.ins"):
-                    model_path = "/ai_stitcher_v2.ins"
-                if not model_path or not os.path.exists(model_path):
-                    self.db.update_job(job_id, status=STATUS_FAILED)
-                    LOGGER.error(
-                        "AI stitch requires a model file; missing at %s for job %s",
-                        model_path or "<unset>",
-                        job_id,
-                    )
-                    return
-                cmd.extend(["-ai_stitching_model", model_path])
-            if not self.original_bitrate and self.bitrate:
-                cmd.extend(["-bitrate", self.bitrate])
-            if self.enable_h265:
-                cmd.append("-enable_h265_encoder")
-            if self.enable_flowstate:
-                cmd.append("-enable_flowstate")
-            if self.enable_directionlock:
-                cmd.append("-enable_directionlock")
-            if self.enable_stitchfusion:
-                cmd.append("-enable_stitchfusion")
-            if not self.disable_cuda:
-                cmd.extend(["-disable_cuda", "false"])
-            cmd.extend(
-                [
-                    "-stitch_type",
-                    self.stitch_type,
-                    "-output",
-                    temp_output,
-                ]
-            )
+            try:
+                cmd = self.build_sdk_command(sources, temp_output, output_size_value)
+            except ValueError as exc:
+                self.db.update_job(job_id, status=STATUS_FAILED)
+                LOGGER.error("Invalid SDK configuration: %s", exc)
+                return
             if self.debug_mode:
                 LOGGER.info("Debug mode enabled; suppressing MediaSDKTest execution for job %s", job_id)
                 LOGGER.debug("Suppressed command: %s", " ".join(cmd))
@@ -1281,13 +1274,12 @@ class AutoStitcher:
                     if final_file.lower().endswith((".jpg", ".jpeg")):
                         try:
                             os.replace(temp_output, final_file)
-                            inject_image_metadata(final_file, row["timestamp"])
-                            status = STATUS_PROCESSED
+                            status = STATUS_PROCESSED if inject_image_metadata(final_file, getattr(self, 'metadata_timestamp', row["timestamp"])) else STATUS_FAILED
                         except OSError as e:
                             LOGGER.error("Failed to move temp image to %s: %s", final_file, e)
                             status = STATUS_FAILED
                     else:
-                        timestamp_iso = format_creation_time(row["timestamp"])
+                        timestamp_iso = format_creation_time(getattr(self, 'metadata_timestamp', row["timestamp"]))
                         ffmpeg_cmd = [
                             "ffmpeg",
                             "-y",
@@ -1334,8 +1326,7 @@ class AutoStitcher:
                             )
                             status = STATUS_FAILED
                         else:
-                            inject_spherical_metadata(final_file)
-                            status = STATUS_PROCESSED
+                            status = STATUS_PROCESSED if inject_spherical_metadata(final_file) else STATUS_FAILED
                 if status == STATUS_FAILED and os.path.exists(temp_output):
                     try:
                         os.remove(temp_output)
