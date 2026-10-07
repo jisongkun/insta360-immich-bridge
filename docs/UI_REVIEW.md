@@ -8,6 +8,7 @@ The review used Superpowers systematic debugging, regression tests, a separate r
 | Converter Save could partially commit parallelism/ratio before an invalid profile failed | One settings request validates all fields before writes | Flask invalid request and persistence-failure tests; React rejected Save; old App failed the same regression |
 | Polling overwrote converter draft | Initialize draft on open; leave it untouched by polls | React regression failed with original App, passed after fix |
 | Compute Ratio persisted before Save; a late response crossed Cancel/reopen | Draft-only calculation and dialog-generation guard | Flask compute test; deferred React response regression |
+| Reopening immediately after Save showed previous settings while status refreshed | Cache accepted config/ratio/concurrency before closing | Delayed-status React regression; Chrome immediate reopen |
 | Numeric fields could not be cleared (typing 3 produced 13 or 0.013) | Preserve editing strings and validate on Save | React clear/replace regression for all five fields |
 | New URL/key retained previous connection/target | Clear verification/target; verify current account before folder enqueue; reject connection changes during tasks | Flask target/config tests |
 | Different selected work silently reused a running task | Coalesce only equivalent requests; otherwise report busy | Real blocking task/selected regeneration tests |
