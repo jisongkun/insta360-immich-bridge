@@ -440,7 +440,9 @@ export default function App() {
             </button>
           ))}
         </div>
-        {controlsLocked && <p className="muted">Command running…</p>}
+        {controlsLocked && !loginOpen && statusQuery.data && (
+          <p className="muted">Command running…</p>
+        )}
         {mutation.isError && (
           <p className="error">{(mutation.error as Error)?.message}</p>
         )}

@@ -197,6 +197,7 @@ describe("bridge authentication", () => {
     vi.stubGlobal("fetch", () => new Promise<Response>(() => {}));
     mount();
     expect(screen.getByRole("heading", { name: "Bridge Login" })).toBeTruthy();
+    expect(screen.queryByText("Command running…")).toBeNull();
     expect(
       (screen.getByRole("button", { name: "Test Connection" }) as HTMLButtonElement).disabled,
     ).toBe(true);
