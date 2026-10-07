@@ -48,6 +48,7 @@ class Pipeline:
                 raise ValueError("Immich target account changed; delivery blocked")
             self.check_cancel(cancel)
             phase = job.get("phase", "pending")
+            resume_replacement = phase == "replacing"
             if phase in ("pending", "converting"):
                 # Refresh only before conversion. Another requested generation may have
                 # completed since enqueue; later delivery phases keep their persisted predecessor.
@@ -156,6 +157,20 @@ class Pipeline:
                 job = self.store.job(id)
             if phase == "replacing":
                 self.check_cancel(cancel)
+                if resume_replacement:
+                    if self.client.asset(job["asset_id"]).get("isTrashed"):
+                        raise ValueError(
+                            "New export is in Immich trash; previous export retained"
+                        )
+                    self.check_cancel(cancel)
+                    digest = self.client.download(
+                        job["asset_id"], None, max_bytes=job["output_bytes"]
+                    )
+                    if digest != job["output_sha256"]:
+                        raise ValueError(
+                            "New export changed since verification; previous export retained"
+                        )
+                    self.check_cancel(cancel)
                 previous = job.get("previous")
                 if previous and previous.get("asset_id") != job["asset_id"]:
                     if (
@@ -208,6 +223,11 @@ class Pipeline:
                             self.store.update(id, copied=True)
                         # Readback on resume resolves an uncertain trash response.
                         self.check_cancel(cancel)
+                        if self.client.asset(job["asset_id"]).get("isTrashed"):
+                            raise ValueError(
+                                "New export unavailable; previous export retained"
+                            )
+                        self.check_cancel(cancel)
                         self.client.trash(old)
                         if not self.client.asset(old).get("isTrashed"):
                             raise ValueError(
@@ -247,7 +267,12 @@ class Pipeline:
             key = self.config.key()
             if key:
                 message = message.replace(key, "[redacted]")
-            attempts = self.store.job(id).get("attempts", 0) + 1
+            failed = self.store.job(id)
+            attempts = failed.get("attempts", 0) + 1
+            # Invalid pre-upload output needs a fresh private conversion, not endless
+            # validation of the same bytes. No remote intent has been written yet.
+            if failed.get("phase") == "validating":
+                self.store.update(id, phase="pending")
             self.store.update(
                 id,
                 stage="failed",

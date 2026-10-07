@@ -39,7 +39,10 @@ First Linux AMD64 image build failed while fetching Ubuntu packages from archive
 - Updated full suite: **39 passed in 50.66s**; frontend build **84 modules, 328 ms**; AST, ruff F and diff checks passed.
 - Linux AMD64 Docker image built successfully after loader corrections. `ldd` has no missing libraries; actual `MediaSDKTest -help` prints **SDK version 3.1.5**, model-root and native CLI flags, exits **255** as expected from vendor input validation. This proves loader/help startup on local emulation, not GPU/media conversion.
 - GitHub Actions permissions readback: **enabled=false**. No Actions run or deployment performed.
-- Final fresh review of corrections and final source push results recorded below.
+- Second fresh independent whole-branch review re-ran 39 tests and found validation retry stuck on invalid bytes and resumed replacement trusting stale new-asset verification. Both reproduced with failing regression tests and fixed: pre-upload validation restarts conversion, unresolved remote intent retains lineage, replacement resume verifies new remote content and availability before old mutation.
+- Final code suite: **41 passed in 50.69s**; frontend **84 modules, 339 ms**; ruff F, AST and diff checks passed. Backend image rebuilt with final source, exit 0.
+- Latest browser fixture smoke: API-source switch persists independently; automatic-photo toggle defaults off; per-job pause/resume and error filter work; size percentage/ETA removed. Blob-download click had no browser console error but IAB download event was not observable (two timeouts), so saved-file behavior remains a browser acceptance item; no claim that download was verified.
+- Targeted follow-up review and source push result to be recorded after completion.
 
 ## Remaining acceptance
 

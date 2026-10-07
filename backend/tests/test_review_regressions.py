@@ -195,3 +195,64 @@ def test_unknown_auto_projection_is_blocked_and_disk_preflight(tmp_path, monkeyp
     )
     with pytest.raises(ValueError, match="space"):
         Converter.check_space(group, config.recipe(), config)
+
+
+def test_validation_failure_can_reconvert_and_new_recipe_is_not_blocked(tmp_path):
+    store, client, converter, config, group, id, pipeline = pipeline_setup(tmp_path)
+    pipeline.validator = lambda *a: (_ for _ in ()).throw(ValueError("Invalid media"))
+    pipeline.process(id, threading.Event())
+    assert store.job(id)["stage"] == "failed"
+    pipeline.validator = lambda *a: None
+    pipeline.process(id, threading.Event())
+    assert store.job(id)["stage"] == "done" and converter.calls == 2
+    other = store.enqueue(
+        {
+            "id": "another",
+            "kind": "video",
+            "files": [],
+            "capture_time": group["capture_time"],
+        },
+        config.recipe(),
+        store.job(id)["target"],
+    )
+    pipeline.validator = lambda *a: (_ for _ in ()).throw(ValueError("Invalid media"))
+    pipeline.process(other, threading.Event())
+    newer = store.enqueue(
+        store.job(other)["group"],
+        {**config.recipe(), "bitrate": "200000000"},
+        store.job(id)["target"],
+    )
+    pipeline.validator = lambda *a: None
+    pipeline.process(newer, threading.Event())
+    assert store.job(newer)["stage"] == "done"
+
+
+def test_missing_or_edited_new_export_blocks_old_trash_on_resume(tmp_path):
+    store, client, converter, config, group, original, pipeline = pipeline_setup(
+        tmp_path
+    )
+    pipeline.process(original, threading.Event())
+    new = store.enqueue(
+        group, config.recipe(), store.job(original)["target"], force=True
+    )
+    store.update(new, replace=True)
+    converter.data = b"new export"
+    trash = client.trash
+    client.trash = lambda *a: (_ for _ in ()).throw(ImmichError(503))
+    pipeline.process(new, threading.Event())
+    assert store.job(new)["copied"]
+    current = store.job(new)["asset_id"]
+    old = store.job(original)["asset_id"]
+    client.trash = trash
+    client.trashed = {current}
+    pipeline.process(new, threading.Event())
+    assert store.job(new)["stage"] == "failed" and old not in client.trashed
+    assert Path(store.job(new)["output"]).exists()
+    client.trashed = set()
+    saved = client.media[current]
+    client.media[current] = b"changed!"
+    pipeline.process(new, threading.Event())
+    assert store.job(new)["stage"] == "failed" and old not in client.trashed
+    client.media[current] = saved
+    pipeline.process(new, threading.Event())
+    assert store.job(new)["stage"] == "done" and old in client.trashed

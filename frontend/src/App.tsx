@@ -418,7 +418,7 @@ export default function App() {
       <section className="panel summary">
         <h2>Job Summary</h2>
         <p className="muted">
-          转换百分比和预计大小沿用原转换器估算；完成以 Immich 原文件核验为准。
+          显示阶段、耗时和容量估算；完成以 Immich 原文件核验为准。
         </p>
         <div className="summary-grid">
           <SummaryCard label="Queued" value={queuedJobs} tone="queued" />

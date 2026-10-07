@@ -119,12 +119,13 @@ class Store:
                     "SELECT id,payload FROM jobs WHERE source_id=? AND target=? AND id!=? AND stage!='done'",
                     (job["source_id"], job["target"], job_id),
                 ).fetchall()
-                # An unresolved conversion/delivery retains the source lineage across failure,
+                # An unresolved remote delivery retains the source lineage across failure,
                 # cancellation and restart. Resume it before another export can take over.
                 blockers = [
                     r["id"]
                     for r in unfinished
-                    if json.loads(r["payload"]).get("phase", "pending") != "pending"
+                    if json.loads(r["payload"]).get("phase", "pending")
+                    in ("upload_intent", "verifying", "replacing", "cleanup")
                 ]
                 if blockers:
                     row = c.execute(
