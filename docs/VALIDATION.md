@@ -42,7 +42,10 @@ First Linux AMD64 image build failed while fetching Ubuntu packages from archive
 - Second fresh independent whole-branch review re-ran 39 tests and found validation retry stuck on invalid bytes and resumed replacement trusting stale new-asset verification. Both reproduced with failing regression tests and fixed: pre-upload validation restarts conversion, unresolved remote intent retains lineage, replacement resume verifies new remote content and availability before old mutation.
 - Final code suite: **41 passed in 50.69s**; frontend **84 modules, 339 ms**; ruff F, AST and diff checks passed. Backend image rebuilt with final source, exit 0.
 - Latest browser fixture smoke: API-source switch persists independently; automatic-photo toggle defaults off; per-job pause/resume and error filter work; size percentage/ETA removed. Blob-download click had no browser console error but IAB download event was not observable (two timeouts), so saved-file behavior remains a browser acceptance item; no claim that download was verified.
-- Targeted follow-up review and source push result to be recorded after completion.
+- Follow-up review **approved code commit 39ba803**, independently running **23 targeted tests**, with no unresolved Important findings. Declined real GPU/camera/server and browser download completion as lacking evidence.
+- Original checkout master fast-forwarded to 39ba803 and pushed to origin; immediate ahead/behind readback **0/0**. Final source remains in the user checkout. No NAS deployment.
+- Final container smoke: actual image Python bridge imports and Flask authenticated status passed (unauthenticated401/authenticated200); private SDK vendor copy in user checkout rehashed to the expected SHA-256. Compose validation repeated successfully.
+- Original-checkout clean frontend `npm ci && npm run build`: **84 modules, 359 ms**; merged-checkout backend: **41 passed in 50.72s**, legacy AST success.
 
 ## Remaining acceptance
 
